@@ -1,0 +1,18 @@
+{
+  "name": "reimec-flow",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm --workspace=apps/desktop run build",
+    "build:api": "npm --workspace=apps/api run build",
+    "build:web": "npm --workspace=apps/web run build",
+    "build:mac": "npm --workspace=apps/desktop-shell run build:mac",
+    "dev:desktop": "npm --workspace=apps/desktop run dev",
+    "dev:electron": "npm --workspace=apps/desktop-shell run dev",
+    "dev:desktop:app": "npm --workspace=apps/api run dev",
+    "dist:win": "npm --workspace=apps/desktop-shell run dist:win",
+    "dist:mac": "npm --workspace=apps/desktop-shell run dist:mac"
+  }
+}

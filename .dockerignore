@@ -1,0 +1,14 @@
+.git
+.DS_Store
+node_modules
+npm-debug.log*
+
+apps/*/node_modules
+apps/*/dist
+apps/desktop-shell/dist
+apps/desktop-shell/renderer
+
+debug-*.log
+*.local
+.env
+apps/*/.env

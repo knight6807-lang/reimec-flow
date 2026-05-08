@@ -1,0 +1,16 @@
+node_modules
+
+.DS_Store
+.env
+*.local
+
+apps/*/.env
+apps/*/.env.local
+apps/*/dist
+apps/desktop-shell/renderer
+apps/desktop-shell/api-dist
+apps/api/data.json
+apps/api/system
+
+debug-*.log
+npm-debug.log*

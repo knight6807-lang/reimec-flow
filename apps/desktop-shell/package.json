@@ -1,0 +1,120 @@
+{
+  "name": "qouter-x",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Qouter X desktop application",
+  "author": "Qouter X",
+  "type": "commonjs",
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "node scripts/run-electron.cjs",
+    "start": "node scripts/run-electron.cjs",
+    "build:renderer": "npm --prefix ../desktop run build && node scripts/prepare-renderer.cjs && node scripts/prepare-api.cjs && node scripts/prepare-assets.cjs",
+    "build": "npm run build:renderer && node scripts/run-builder.cjs --dir",
+    "dist": "npm run build:renderer && node scripts/run-builder.cjs",
+    "dist:win": "npm run build:renderer && node scripts/run-builder.cjs --win",
+    "dist:mac": "npm run build:renderer && node scripts/run-builder.cjs --mac",
+    "publish": "npm run build:renderer && node scripts/run-builder.cjs --publish always",
+    "build:mac": "npm run build:renderer && node scripts/run-builder.cjs --mac",
+    "build:win": "npm run build:renderer && node scripts/run-builder.cjs --win"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "electron-updater": "^6.6.2",
+    "express": "^4.19.2",
+    "heic-convert": "^2.1.0",
+    "imapflow": "^1.0.181",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.16",
+    "pdfkit": "^0.15.0",
+    "potrace": "^2.1.8",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
+    "socket.io": "^4.8.1",
+    "stripe": "^16.8.0",
+    "svg-path-parser": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^26.4.0"
+  },
+  "build": {
+    "appId": "com.qouterx.app",
+    "electronVersion": "22.3.27",
+    "productName": "Qouter X",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "api-bootstrap.cjs",
+      "preload.cjs",
+      "build/**/*",
+      "renderer/**/*",
+      "api-dist/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [],
+    "extraResources": [
+      {
+        "from": "api-bootstrap.cjs",
+        "to": "api-bootstrap.cjs"
+      },
+      {
+        "from": "api-dist",
+        "to": "api-dist"
+      }
+    ],
+    "extraMetadata": {
+      "name": "qouter-x",
+      "productName": "Qouter X",
+      "version": "1.0.0"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "identity": null,
+      "category": "public.app-category.business",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "Qouter X Setup.${ext}",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "ia32",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "artifactName": "Qouter X-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "${env.GH_OWNER}",
+        "repo": "${env.GH_REPO}"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Qouter X"
+    }
+  }
+}
