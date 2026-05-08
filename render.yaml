@@ -1,11 +1,11 @@
 services:
   - type: web
     name: qouterx-api
-    runtime: node
+    runtime: docker
     plan: starter
     rootDir: .
-    buildCommand: npm ci --workspace=apps/api --include-workspace-root=false && npm run build:api
-    startCommand: npm --workspace=apps/api run start
+    dockerfilePath: ./Dockerfile.api
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
