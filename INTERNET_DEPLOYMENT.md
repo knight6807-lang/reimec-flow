@@ -11,7 +11,7 @@ Web app: https://app.your-domain.com
 API:     https://api.your-domain.com
 ```
 
-The web app is `apps/web`. The backend is `apps/api`.
+The browser app is built from `apps/desktop` so the hosted site matches the main Qouter X app. The backend is `apps/api`.
 
 ## Option A: Render Blueprint
 
@@ -86,7 +86,7 @@ VITE_APP_URL=https://app.your-domain.com \
 npm run build:web
 ```
 
-Host `apps/web/dist` on any static host.
+Host `apps/desktop/dist` on any static host.
 
 ## Desktop App Gateway
 

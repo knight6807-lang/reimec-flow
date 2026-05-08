@@ -39,8 +39,8 @@ services:
     name: qouterx-web
     runtime: static
     rootDir: .
-    buildCommand: npm ci --workspace=apps/web --include-workspace-root=false && npm run build:web
-    staticPublishPath: apps/web/dist
+    buildCommand: npm ci --workspace=apps/desktop --include-workspace-root=false && npm run build:web
+    staticPublishPath: apps/desktop/dist
     envVars:
       - key: VITE_API_URL
         sync: false
