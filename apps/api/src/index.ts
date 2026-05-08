@@ -544,6 +544,24 @@ function sendBillingRequired(res: express.Response, ws: WorkspaceRecord) {
   });
 }
 
+function syncWorkspaceMemberBillingAccess(companyId: string, input: { active: boolean; paidUntil?: string | null }) {
+  const workspace = getWorkspace(companyId);
+  const members = getWorkspaceMembers(workspace.id);
+  const paidUntilSeconds = toUnixSeconds(input.paidUntil);
+  members.forEach(({ user }) => {
+    if (input.active) {
+      user.ownerLocked = false;
+      if (paidUntilSeconds) {
+        user.manualAccountPaidUntil = paidUntilSeconds;
+      }
+    } else {
+      user.ownerLocked = true;
+      user.manualAccountPaidUntil = null;
+    }
+    upsertUser(user);
+  });
+}
+
 function updateWorkspaceBillingState(
   ws: WorkspaceRecord,
   input: {
@@ -7395,6 +7413,7 @@ app.post("/api/admin/companies/:id/unlock", authRequired, mainAdminRequired, (re
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: true, paidUntil: snapshot.company.subscriptionEndDate });
   res.json({ ok: true, company: snapshot.company });
 });
 
@@ -7410,6 +7429,7 @@ app.post("/api/admin/companies/:id/start-cycle", authRequired, mainAdminRequired
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: true, paidUntil: snapshot.company.subscriptionEndDate });
   res.json({ ok: true, company: snapshot.company });
 });
 
@@ -7425,6 +7445,7 @@ app.post("/api/admin/companies/:id/renew", authRequired, mainAdminRequired, (req
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: true, paidUntil: snapshot.company.subscriptionEndDate });
   res.json({ ok: true, company: snapshot.company });
 });
 
@@ -7439,6 +7460,7 @@ app.post("/api/admin/companies/:id/suspend", authRequired, mainAdminRequired, (r
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: false });
   res.json({ ok: true, company: snapshot.company });
 });
 
@@ -7453,6 +7475,7 @@ app.post("/api/admin/companies/:id/cancel", authRequired, mainAdminRequired, (re
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: false });
   res.json({ ok: true, company: snapshot.company });
 });
 
@@ -9130,6 +9153,7 @@ app.post("/api/billing/admin/companies/:companyId/renew", authRequired, (req: Au
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, { active: true, paidUntil: snapshot.company.subscriptionEndDate });
   void getCloudSyncDb().pushEvent({
     eventType: "subscription_renewed",
     payload: {
@@ -9162,6 +9186,10 @@ app.post("/api/billing/admin/companies/:companyId/status", authRequired, (req: A
     res.status(404).json({ error: "company not found" });
     return;
   }
+  syncWorkspaceMemberBillingAccess(snapshot.company.id, {
+    active: nextStatus === "active" || nextStatus === "trial",
+    paidUntil: snapshot.company.subscriptionEndDate
+  });
   const eventType: CloudEventType =
     nextStatus === "suspended"
       ? "account_suspended"
