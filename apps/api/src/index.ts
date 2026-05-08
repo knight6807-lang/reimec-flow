@@ -562,6 +562,29 @@ function syncWorkspaceMemberBillingAccess(companyId: string, input: { active: bo
   });
 }
 
+function buildWorkspaceSubscriptionStatus(ws: WorkspaceRecord, userId: string | undefined, deviceId: string, deviceName: string) {
+  const snapshot = getWorkspaceSubscriptionSnapshot(ws, userId);
+  const hasAccess = workspaceHasBillingAccess(ws, userId);
+  if (snapshot?.company) {
+    getManualSubscriptionDb().markDeviceSeen({
+      companyId: snapshot.company.id,
+      deviceId,
+      deviceName,
+      isAllowed: hasAccess
+    });
+  }
+  return {
+    status: snapshot?.status ?? getWorkspaceBillingStatus(ws, userId),
+    hasAccess,
+    limitedAccess: hasAccess ? false : (snapshot?.limitedAccess ?? false),
+    daysRemaining: snapshot?.expiresInDays ?? 0,
+    daysExpired: snapshot?.expiredDays ?? 0,
+    paymentReference: snapshot?.company.manualPaymentReference ?? null,
+    lastConnectedAt: new Date().toISOString(),
+    company: snapshot?.company ?? null
+  };
+}
+
 function updateWorkspaceBillingState(
   ws: WorkspaceRecord,
   input: {
@@ -7582,23 +7605,8 @@ app.get("/api/local/subscription/status", authRequired, async (req: AuthedReques
       });
       return;
     }
-    const snapshot = await syncLocalSubscriptionSnapshot({
-      workspaceId,
-      deviceId,
-      deviceName,
-      platform: normalizeCloudPlatform(req.query?.platform ?? req.body?.platform ?? process.platform)
-    });
-    const localCompany = (snapshot as { company?: Record<string, unknown> | null }).company;
-    res.json({
-      status: (snapshot as { status?: string }).status ?? "pending",
-      hasAccess: Boolean((snapshot as { hasAccess?: boolean }).hasAccess),
-      limitedAccess: Boolean((snapshot as { limitedAccess?: boolean }).limitedAccess),
-      daysRemaining: Number((snapshot as { daysRemaining?: number }).daysRemaining ?? 0),
-      daysExpired: Number((snapshot as { daysExpired?: number }).daysExpired ?? 0),
-      paymentReference: localCompany && typeof localCompany.manualPaymentReference === "string" ? localCompany.manualPaymentReference : null,
-      lastConnectedAt: typeof (snapshot as { lastConnectedAt?: string | null }).lastConnectedAt === "string" ? (snapshot as { lastConnectedAt?: string | null }).lastConnectedAt : null,
-      company: localCompany ?? null
-    });
+    const ws = getWorkspace(workspaceId);
+    res.json(buildWorkspaceSubscriptionStatus(ws, req.userId, deviceId, deviceName));
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Failed to get local subscription status." });
   }
@@ -7637,12 +7645,8 @@ app.post("/api/local/subscription/sync-now", authRequired, async (req: AuthedReq
       });
       return;
     }
-    const snapshot = await syncLocalSubscriptionSnapshot({
-      workspaceId,
-      deviceId,
-      deviceName,
-      platform: normalizeCloudPlatform(req.body?.platform ?? process.platform)
-    });
+    const ws = getWorkspace(workspaceId);
+    const snapshot = buildWorkspaceSubscriptionStatus(ws, req.userId, deviceId, deviceName);
     const result = await getCloudSyncDb().syncPendingEvents();
     res.json({ ok: true, snapshot, sync: result });
   } catch (error) {
