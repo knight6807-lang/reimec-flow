@@ -7386,49 +7386,74 @@ app.get("/api/subscriptions/status", (req, res) => {
 
 app.post("/api/admin/companies/:id/unlock", authRequired, mainAdminRequired, (req: AuthedRequest, res) => {
   const company = getCloudSubscriptionDb().unlockCompany(req.params.id, stringOrNull(req.body?.adminNote) ?? getUserById(req.userId!)?.email ?? null);
-  if (!company) {
+  if (company) {
+    res.json({ ok: true, company });
+    return;
+  }
+  const snapshot = getManualSubscriptionDb().updateCompanyStatus(req.params.id, "active", stringOrNull(req.body?.adminNote) ?? getUserById(req.userId!)?.email ?? null);
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.post("/api/admin/companies/:id/start-cycle", authRequired, mainAdminRequired, (req: AuthedRequest, res) => {
   const months = typeof req.body?.months === "number" && Number.isFinite(req.body.months) ? req.body.months : 1;
   const company = getCloudSubscriptionDb().startSubscriptionCycle(req.params.id, months, stringOrNull(req.body?.adminNote));
-  if (!company) {
+  if (company) {
+    res.json({ ok: true, company });
+    return;
+  }
+  const snapshot = getManualSubscriptionDb().renewCompany(req.params.id, months, stringOrNull(req.body?.adminNote));
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.post("/api/admin/companies/:id/renew", authRequired, mainAdminRequired, (req: AuthedRequest, res) => {
   const months = typeof req.body?.months === "number" && Number.isFinite(req.body.months) ? req.body.months : 1;
   const company = getCloudSubscriptionDb().renewCompany(req.params.id, months, stringOrNull(req.body?.adminNote));
-  if (!company) {
+  if (company) {
+    res.json({ ok: true, company });
+    return;
+  }
+  const snapshot = getManualSubscriptionDb().renewCompany(req.params.id, months, stringOrNull(req.body?.adminNote));
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.post("/api/admin/companies/:id/suspend", authRequired, mainAdminRequired, (req: AuthedRequest, res) => {
   const company = getCloudSubscriptionDb().setCompanyStatus(req.params.id, "suspended", stringOrNull(req.body?.adminNote));
-  if (!company) {
+  if (company) {
+    res.json({ ok: true, company });
+    return;
+  }
+  const snapshot = getManualSubscriptionDb().updateCompanyStatus(req.params.id, "suspended", stringOrNull(req.body?.adminNote));
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.post("/api/admin/companies/:id/cancel", authRequired, mainAdminRequired, (req: AuthedRequest, res) => {
   const company = getCloudSubscriptionDb().setCompanyStatus(req.params.id, "cancelled", stringOrNull(req.body?.adminNote));
-  if (!company) {
+  if (company) {
+    res.json({ ok: true, company });
+    return;
+  }
+  const snapshot = getManualSubscriptionDb().updateCompanyStatus(req.params.id, "cancelled", stringOrNull(req.body?.adminNote));
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.get("/api/admin/subscription-dashboard", authRequired, mainAdminRequired, (_req: AuthedRequest, res) => {
@@ -9055,24 +9080,15 @@ app.get("/api/billing/admin/dashboard", authRequired, (req: AuthedRequest, res) 
     return;
   }
   const cloud = getCloudSubscriptionDb().getAdminDashboard();
+  const manual = getManualSubscriptionDb().getAdminDashboard();
   res.json({
     dashboard: {
-      companies: cloud.companies.map((company) => ({
-        ...company,
-        resolvedStatus: company.subscriptionStatus,
-        hasAccess: company.subscriptionStatus === "active" || company.subscriptionStatus === "trial",
-        limitedAccess: company.subscriptionStatus === "expired" && company.daysRemaining > 0,
-        expiresInDays: company.daysRemaining,
-        expiredDays: company.daysExpired,
-        graceDaysRemaining: 0,
-        lastSeenAt: company.lastConnectedAt,
-        pendingPaymentCount: getManualSubscriptionDb().listManualPayments(company.id).filter((payment) => !payment.confirmedByAdmin).length
-      })),
-      activeAccounts: cloud.activeSubscriptions,
-      expiredAccounts: cloud.expiredAccounts,
-      expiringSoon: cloud.expiringSoon,
-      suspendedAccounts: cloud.companies.filter((company) => company.subscriptionStatus === "suspended").length,
-      pendingPaymentProofs: getManualSubscriptionDb().listManualPayments().filter((payment) => !payment.confirmedByAdmin).length,
+      companies: manual.companies,
+      activeAccounts: manual.activeAccounts,
+      expiredAccounts: manual.expiredAccounts,
+      expiringSoon: manual.expiringSoon,
+      suspendedAccounts: manual.suspendedAccounts,
+      pendingPaymentProofs: manual.pendingPaymentProofs,
       devices: cloud.devices
     },
     pendingRequests: cloud.pendingAccountRequests,
@@ -9088,8 +9104,8 @@ app.get("/api/billing/admin/companies/:companyId/payments", authRequired, (req: 
   const companyId = req.params.companyId;
   res.json({
     payments: getManualSubscriptionDb().listManualPayments(companyId),
-    auditLog: getCloudSubscriptionDb().listAuditLog(companyId),
-    company: getCloudSubscriptionDb().getCompany(companyId)
+    auditLog: getManualSubscriptionDb().listAuditLog(companyId),
+    company: getManualSubscriptionDb().getCompany(companyId)
   });
 });
 
@@ -9105,38 +9121,25 @@ app.post("/api/billing/admin/companies/:companyId/renew", authRequired, (req: Au
   }
   const monthsRaw = Number(req.body?.months);
   const months = Number.isFinite(monthsRaw) && monthsRaw > 0 ? Math.min(12, Math.floor(monthsRaw)) : 1;
-  const company = getCloudSubscriptionDb().renewCompany(
+  const snapshot = getManualSubscriptionDb().renewCompany(
     companyId,
     months,
     typeof req.body?.adminNote === "string" ? req.body.adminNote : null
   );
-  if (!company) {
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  getManualSubscriptionDb().applyExternalSnapshot({
-    companyId: company.id,
-    companyName: company.companyName,
-    contactName: company.contactName,
-    email: company.email,
-    phone: company.phone,
-    manualPaymentReference: company.manualPaymentReference,
-    subscriptionStatus: company.subscriptionStatus as ManualSubscriptionStatus,
-    planName: company.planName,
-    subscriptionStartDate: company.subscriptionStartDate,
-    subscriptionEndDate: company.subscriptionEndDate,
-    graceUntil: company.graceUntil
-  });
   void getCloudSyncDb().pushEvent({
     eventType: "subscription_renewed",
     payload: {
       companyId,
       months,
-      status: company.subscriptionStatus,
-      subscriptionEndDate: company.subscriptionEndDate
+      status: snapshot.company.subscriptionStatus,
+      subscriptionEndDate: snapshot.company.subscriptionEndDate
     }
   });
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.post("/api/billing/admin/companies/:companyId/status", authRequired, (req: AuthedRequest, res) => {
@@ -9150,28 +9153,15 @@ app.post("/api/billing/admin/companies/:companyId/status", authRequired, (req: A
     res.status(400).json({ error: "invalid status" });
     return;
   }
-  const company = getCloudSubscriptionDb().setCompanyStatus(
+  const snapshot = getManualSubscriptionDb().updateCompanyStatus(
     companyId,
-    nextStatus as CloudSubscriptionStatus,
+    nextStatus as ManualSubscriptionStatus,
     typeof req.body?.adminNote === "string" ? req.body.adminNote : null
   );
-  if (!company) {
+  if (!snapshot) {
     res.status(404).json({ error: "company not found" });
     return;
   }
-  getManualSubscriptionDb().applyExternalSnapshot({
-    companyId: company.id,
-    companyName: company.companyName,
-    contactName: company.contactName,
-    email: company.email,
-    phone: company.phone,
-    manualPaymentReference: company.manualPaymentReference,
-    subscriptionStatus: company.subscriptionStatus as ManualSubscriptionStatus,
-    planName: company.planName,
-    subscriptionStartDate: company.subscriptionStartDate,
-    subscriptionEndDate: company.subscriptionEndDate,
-    graceUntil: company.graceUntil
-  });
   const eventType: CloudEventType =
     nextStatus === "suspended"
       ? "account_suspended"
@@ -9182,11 +9172,11 @@ app.post("/api/billing/admin/companies/:companyId/status", authRequired, (req: A
     eventType,
     payload: {
       companyId,
-      status: company.subscriptionStatus,
-      subscriptionEndDate: company.subscriptionEndDate
+      status: snapshot.company.subscriptionStatus,
+      subscriptionEndDate: snapshot.company.subscriptionEndDate
     }
   });
-  res.json({ ok: true, company });
+  res.json({ ok: true, company: snapshot.company });
 });
 
 app.patch("/api/billing/admin/companies/:companyId/note", authRequired, (req: AuthedRequest, res) => {
