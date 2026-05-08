@@ -8892,11 +8892,12 @@ app.get("/api/billing/status", (req: AuthedRequest, res) => {
   const ws = getWorkspace(workspaceId);
   const fallback = () => {
     const snapshot = getWorkspaceSubscriptionSnapshot(ws, req.userId);
+    const hasBillingAccess = workspaceHasBillingAccess(ws, req.userId);
     res.json({
       status: snapshot?.status ?? getWorkspaceBillingStatus(ws, req.userId),
       currentPeriodEnd: getEffectiveBillingPeriodEnd(ws),
-      hasAccess: snapshot?.hasAccess ?? workspaceHasBillingAccess(ws, req.userId),
-      limitedAccess: snapshot?.limitedAccess ?? false,
+      hasAccess: hasBillingAccess,
+      limitedAccess: hasBillingAccess ? false : (snapshot?.limitedAccess ?? false),
       graceUntil: snapshot?.company.graceUntil ?? null,
       paymentReference: snapshot?.company.manualPaymentReference ?? null,
       companyId: snapshot?.company.id ?? ws.id
@@ -8913,11 +8914,12 @@ app.get("/api/billing/status", (req: AuthedRequest, res) => {
     platform: normalizeCloudPlatform(req.query.platform ?? process.platform)
   }).then((snapshot) => {
     const company = (snapshot as { company?: Record<string, unknown> | null }).company;
+    const hasBillingAccess = workspaceHasBillingAccess(ws, req.userId);
     res.json({
       status: (snapshot as { status?: string }).status ?? "pending",
       currentPeriodEnd: toUnixSeconds(typeof company?.subscriptionEndDate === "string" ? company.subscriptionEndDate : null),
-      hasAccess: Boolean((snapshot as { hasAccess?: boolean }).hasAccess),
-      limitedAccess: Boolean((snapshot as { limitedAccess?: boolean }).limitedAccess),
+      hasAccess: hasBillingAccess,
+      limitedAccess: hasBillingAccess ? false : Boolean((snapshot as { limitedAccess?: boolean }).limitedAccess),
       graceUntil: typeof company?.graceUntil === "string" ? company.graceUntil : null,
       paymentReference: typeof company?.manualPaymentReference === "string" ? company.manualPaymentReference : null,
       companyId: typeof company?.id === "string" ? company.id : ws.id
