@@ -1,23 +1,40 @@
 import path from "node:path";
 import { backupDatabaseBeforeMigration, DatabaseSync } from "./db.js";
+import { BrainEventBus } from "./brain/core/BrainEventBus.js";
+import { BrainCache } from "./brain/core/BrainCache.js";
+import { BrainTaskService } from "./brain/core/BrainTaskService.js";
 
 export type BrainEventType =
   | "quote_created"
+  | "quote_approved"
   | "quote_accepted"
   | "job_created"
   | "job_started"
   | "job_completed"
   | "dxf_imported"
+  | "part_dna_analyzed"
   | "part_dna_detected"
   | "material_reserved"
   | "material_used"
+  | "stock_reserved"
+  | "stock_used"
   | "offcut_created"
+  | "offcut_recommended"
+  | "offcut_selected"
+  | "nesting_workspace_created"
+  | "nesting_parts_added"
   | "nesting_completed"
+  | "nesting_heat_warning"
+  | "nesting_exported"
+  | "dxf_error_detected"
+  | "profit_calculated"
+  | "material_forecast_updated"
+  | "subscription_updated"
   | "purchase_order_detected"
   | "payment_received"
   | "error_detected";
 
-export type BrainRecommendationStatus = "open" | "accepted" | "dismissed";
+export type BrainRecommendationStatus = "open" | "accepted" | "dismissed" | "completed";
 
 export type BrainEventRecord = {
   id: number;
@@ -37,8 +54,12 @@ export type BrainRecommendationRecord = {
   confidence: number;
   impactScore: number;
   status: BrainRecommendationStatus;
+  priority?: "low" | "normal" | "high" | "urgent";
+  entityType?: string | null;
+  entityId?: string | null;
   payloadJson: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type BrainEntityLinkRecord = {
@@ -73,6 +94,9 @@ type BrainRecommendationInput = {
   confidence: number;
   impactScore: number;
   status?: BrainRecommendationStatus;
+  priority?: "low" | "normal" | "high" | "urgent";
+  entityType?: string | null;
+  entityId?: string | null;
   payload?: Record<string, unknown>;
 };
 
@@ -92,16 +116,28 @@ function asEventType(value: unknown): BrainEventType {
   const candidate = typeof value === "string" ? value.trim() : "";
   const allowed: BrainEventType[] = [
     "quote_created",
+    "quote_approved",
     "quote_accepted",
     "job_created",
     "job_started",
     "job_completed",
     "dxf_imported",
+    "part_dna_analyzed",
     "part_dna_detected",
     "material_reserved",
     "material_used",
+    "stock_reserved",
+    "stock_used",
     "offcut_created",
+    "nesting_workspace_created",
+    "nesting_parts_added",
     "nesting_completed",
+    "nesting_heat_warning",
+    "nesting_exported",
+    "dxf_error_detected",
+    "profit_calculated",
+    "material_forecast_updated",
+    "subscription_updated",
     "purchase_order_detected",
     "payment_received",
     "error_detected"
@@ -111,7 +147,7 @@ function asEventType(value: unknown): BrainEventType {
 
 function asRecommendationStatus(value: unknown): BrainRecommendationStatus {
   const candidate = typeof value === "string" ? value.trim() : "";
-  return candidate === "accepted" || candidate === "dismissed" ? candidate : "open";
+  return candidate === "accepted" || candidate === "dismissed" || candidate === "completed" ? candidate : "open";
 }
 
 function clampPercentage(value: number) {
@@ -209,8 +245,8 @@ export class BrainRecommendationService {
     const createdAt = new Date().toISOString();
     const result = this.db.prepare(
       `INSERT INTO brain_recommendations
-       (moduleName, recommendationType, title, message, confidence, impactScore, status, payloadJson, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (moduleName, recommendationType, title, message, confidence, impactScore, priority, status, entityType, entityId, payloadJson, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       moduleName,
       recommendationType,
@@ -218,8 +254,12 @@ export class BrainRecommendationService {
       message,
       clampPercentage(input.confidence),
       clampImpactScore(input.impactScore),
+      input.priority ?? "normal",
       input.status ?? "open",
+      input.entityType ?? null,
+      input.entityId ?? null,
       payloadJson,
+      createdAt,
       createdAt
     );
     return {
@@ -231,8 +271,12 @@ export class BrainRecommendationService {
       confidence: clampPercentage(input.confidence),
       impactScore: clampImpactScore(input.impactScore),
       status: input.status ?? "open",
+      priority: input.priority ?? "normal",
+      entityType: input.entityType ?? null,
+      entityId: input.entityId ?? null,
       payloadJson,
-      createdAt
+      createdAt,
+      updatedAt: createdAt
     } satisfies BrainRecommendationRecord;
   }
 
@@ -269,7 +313,7 @@ export class BrainRecommendationService {
 
   updateRecommendation(id: number, status: BrainRecommendationStatus) {
     if (!Number.isFinite(id) || id <= 0) return null;
-    this.db.prepare(`UPDATE brain_recommendations SET status = ? WHERE id = ?`).run(status, id);
+    this.db.prepare(`UPDATE brain_recommendations SET status = ?, updatedAt = ? WHERE id = ?`).run(status, new Date().toISOString(), id);
     const row = this.db.prepare(`SELECT * FROM brain_recommendations WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToRecommendation(row) : null;
   }
@@ -359,8 +403,12 @@ export class BrainRecommendationService {
       confidence: Number(row.confidence ?? 0),
       impactScore: Number(row.impactScore ?? 0),
       status: asRecommendationStatus(row.status),
+      priority: String(row.priority ?? "normal") as BrainRecommendationRecord["priority"],
+      entityType: row.entityType ? String(row.entityType) : null,
+      entityId: row.entityId ? String(row.entityId) : null,
       payloadJson: String(row.payloadJson ?? "{}"),
-      createdAt: String(row.createdAt ?? "")
+      createdAt: String(row.createdAt ?? ""),
+      updatedAt: String(row.updatedAt ?? row.createdAt ?? "")
     };
   }
 }
@@ -385,6 +433,11 @@ export class BrainEventService {
       `INSERT INTO brain_events
        (eventType, entityType, entityId, payloadJson, createdAt)
        VALUES (?, ?, ?, ?, ?)`
+    ).run(eventType, entityType, entityId, payloadJson, createdAt);
+    this.db.prepare(
+      `INSERT INTO brain_event_outbox
+       (eventType, entityType, entityId, payloadJson, status, attempts, createdAt)
+       VALUES (?, ?, ?, ?, 'pending', 0, ?)`
     ).run(eventType, entityType, entityId, payloadJson, createdAt);
     const event: BrainEventRecord = {
       id: Number(result.lastInsertRowid ?? 0),
@@ -449,11 +502,17 @@ export class BrainCoreService {
   readonly memoryService: BrainMemoryService;
   readonly recommendationService: BrainRecommendationService;
   readonly eventService: BrainEventService;
+  readonly eventBus: BrainEventBus;
+  readonly cache: BrainCache;
+  readonly taskService: BrainTaskService;
 
   constructor(private readonly db: DatabaseSync) {
     this.memoryService = new BrainMemoryService(db);
     this.recommendationService = new BrainRecommendationService(db);
     this.eventService = new BrainEventService(db, this.memoryService, this.recommendationService);
+    this.eventBus = new BrainEventBus(db);
+    this.cache = new BrainCache(db);
+    this.taskService = new BrainTaskService(db);
   }
 }
 
@@ -462,6 +521,10 @@ export function openBrainCoreDatabase(rootDir = process.cwd()) {
   backupDatabaseBeforeMigration(dbPath);
   const db = new DatabaseSync(dbPath);
   db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 5000;
+    PRAGMA foreign_keys = ON;
+
     CREATE TABLE IF NOT EXISTS brain_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       eventType TEXT NOT NULL,
@@ -479,9 +542,45 @@ export function openBrainCoreDatabase(rootDir = process.cwd()) {
       message TEXT NOT NULL,
       confidence REAL NOT NULL DEFAULT 0,
       impactScore REAL NOT NULL DEFAULT 0,
+      priority TEXT NOT NULL DEFAULT 'normal',
       status TEXT NOT NULL DEFAULT 'open',
+      entityType TEXT,
+      entityId TEXT,
       payloadJson TEXT NOT NULL DEFAULT '{}',
-      createdAt TEXT NOT NULL
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS brain_event_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      eventType TEXT NOT NULL,
+      entityType TEXT NOT NULL,
+      entityId TEXT NOT NULL,
+      payloadJson TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      lastError TEXT,
+      createdAt TEXT NOT NULL,
+      processedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS brain_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      taskType TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      progressPercent REAL NOT NULL DEFAULT 0,
+      message TEXT NOT NULL DEFAULT '',
+      resultJson TEXT,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS brain_cache (
+      cacheKey TEXT PRIMARY KEY,
+      valueJson TEXT NOT NULL,
+      tagsJson TEXT NOT NULL DEFAULT '[]',
+      createdAt TEXT NOT NULL,
+      expiresAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS brain_entity_links (
@@ -497,8 +596,24 @@ export function openBrainCoreDatabase(rootDir = process.cwd()) {
     CREATE INDEX IF NOT EXISTS idx_brain_events_eventType ON brain_events(eventType);
     CREATE INDEX IF NOT EXISTS idx_brain_events_entity ON brain_events(entityType, entityId);
     CREATE INDEX IF NOT EXISTS idx_brain_recommendations_status ON brain_recommendations(status);
+    CREATE INDEX IF NOT EXISTS idx_brain_outbox_status ON brain_event_outbox(status, attempts, createdAt);
+    CREATE INDEX IF NOT EXISTS idx_brain_tasks_status ON brain_tasks(status, updatedAt DESC);
     CREATE INDEX IF NOT EXISTS idx_brain_links_source ON brain_entity_links(sourceType, sourceId);
     CREATE INDEX IF NOT EXISTS idx_brain_links_target ON brain_entity_links(targetType, targetId);
   `);
+  for (const statement of [
+    `ALTER TABLE brain_recommendations ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
+    `ALTER TABLE brain_recommendations ADD COLUMN entityType TEXT`,
+    `ALTER TABLE brain_recommendations ADD COLUMN entityId TEXT`,
+    `ALTER TABLE brain_recommendations ADD COLUMN updatedAt TEXT`
+  ]) {
+    try {
+      db.exec(statement);
+    } catch {
+      // column already exists
+    }
+  }
+  db.prepare(`UPDATE brain_recommendations SET updatedAt = createdAt WHERE updatedAt IS NULL`).run();
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_brain_recommendations_priority ON brain_recommendations(priority, status);`);
   return new BrainCoreService(db);
 }

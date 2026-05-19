@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { Worker } from "node:worker_threads";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import express from "express";
@@ -92,6 +93,32 @@ import { openBrainPartDnaDatabase, PartDnaBrainService } from "./brain-part-dna.
 import { ManufacturingMemoryService, openManufacturingMemoryDatabase } from "./manufacturing-memory.js";
 import { ProfitIntelligenceService, openProfitIntelligenceDatabase } from "./profit-intelligence.js";
 import { OffcutIntelligenceService, openOffcutIntelligenceDatabase } from "./offcut-intelligence.js";
+import { MaterialPredictionService, openMaterialPredictionDatabase } from "./material-prediction.js";
+import { PurchasingIntelligenceService, openPurchasingIntelligenceDatabase } from "./purchasing-intelligence.js";
+import { ProductionQueueBrainService, openProductionQueueBrainDatabase } from "./production-queue-brain.js";
+import { LeadTimeIntelligenceService, openLeadTimeIntelligenceDatabase } from "./lead-time-intelligence.js";
+import { SheetOptimizerService, openSheetOptimizerDatabase } from "./sheet-optimizer.js";
+import { DxfErrorDetectionService, openDxfErrorDetectionDatabase } from "./dxf-error-detection.js";
+import { NestingIntelligenceService, openNestingIntelligenceDatabase, type NestingPartCandidate } from "./nesting-intelligence.js";
+import { CypNestProgramService, extractDxfGeometry, NestingEngineService, openNestingEngineDatabase, type CypNestProgramInput, type NestPart, type NestResult, type SheetSource } from "./QouterXNestingEngine.js";
+import { NestingWorkspaceService, openNestingWorkspaceDatabase } from "./nesting-workspace.js";
+import { ProductionAssistantService } from "./production-assistant.js";
+import { QouterXBrainOrchestrator, type BrainModuleName, type BrainRunMode } from "./qouterx-brain-orchestrator.js";
+import { BrainOrchestrator as EventBrainOrchestrator } from "./brain/core/BrainOrchestrator.js";
+import { BrainScheduler } from "./brain/core/BrainScheduler.js";
+import type { BrainRunMode as EventBrainRunMode, BrainModule } from "./brain/core/types.js";
+import { partDnaModule } from "./brain/modules/partDna/index.js";
+import { manufacturingMemoryModule } from "./brain/modules/manufacturingMemory/index.js";
+import { profitModule } from "./brain/modules/profit/index.js";
+import { materialPredictionModule } from "./brain/modules/materialPrediction/index.js";
+import { productionQueueModule } from "./brain/modules/productionQueue/index.js";
+import { leadTimeModule } from "./brain/modules/leadTime/index.js";
+import { offcutsModule } from "./brain/modules/offcuts/index.js";
+import { sheetOptimizerModule } from "./brain/modules/sheetOptimizer/index.js";
+import { nestingModule } from "./brain/modules/nesting/index.js";
+import { dxfErrorsModule } from "./brain/modules/dxfErrors/index.js";
+import { purchasingModule } from "./brain/modules/purchasing/index.js";
+import { assistantModule } from "./brain/modules/assistant/index.js";
 import {
   addMembership,
   createSession,
@@ -197,6 +224,17 @@ let brainPartDnaDbSingleton: ReturnType<typeof openBrainPartDnaDatabase> | null 
 let manufacturingMemoryDbSingleton: ReturnType<typeof openManufacturingMemoryDatabase> | null = null;
 let profitIntelligenceDbSingleton: ReturnType<typeof openProfitIntelligenceDatabase> | null = null;
 let offcutIntelligenceDbSingleton: ReturnType<typeof openOffcutIntelligenceDatabase> | null = null;
+let materialPredictionDbSingleton: ReturnType<typeof openMaterialPredictionDatabase> | null = null;
+let purchasingIntelligenceDbSingleton: ReturnType<typeof openPurchasingIntelligenceDatabase> | null = null;
+let productionQueueBrainDbSingleton: ReturnType<typeof openProductionQueueBrainDatabase> | null = null;
+let leadTimeIntelligenceDbSingleton: ReturnType<typeof openLeadTimeIntelligenceDatabase> | null = null;
+let sheetOptimizerDbSingleton: ReturnType<typeof openSheetOptimizerDatabase> | null = null;
+let dxfErrorDetectionDbSingleton: ReturnType<typeof openDxfErrorDetectionDatabase> | null = null;
+let nestingIntelligenceDbSingleton: ReturnType<typeof openNestingIntelligenceDatabase> | null = null;
+let nestingEngineDbSingleton: ReturnType<typeof openNestingEngineDatabase> | null = null;
+let nestingWorkspaceDbSingleton: ReturnType<typeof openNestingWorkspaceDatabase> | null = null;
+let eventBrainOrchestratorSingleton: EventBrainOrchestrator | null = null;
+let eventBrainSchedulerSingleton: BrainScheduler | null = null;
 
 const allowedOrigins = CLIENT_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
 const corsOriginMatcher = (origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) => {
@@ -335,6 +373,7 @@ app.use(express.json({ limit: "25mb" }));
 
 type AuthedRequest = express.Request & { userId?: string };
 type EmailSettingsRecord = NonNullable<WorkspaceRecord["emailSettings"]>;
+type SupportMessageRecord = NonNullable<WorkspaceRecord["supportMessages"]>[number];
 const APP_ACCESS_FEATURES = [
   "chat",
   "jobs",
@@ -644,6 +683,50 @@ function getLocalBillingUser(email: string, password: string) {
   const user = getUserByEmail(email);
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
     return null;
+  }
+  return user;
+}
+
+function ensureAppOwnerBootstrap(email: string, password: string) {
+  if (email.trim().toLowerCase() !== APP_OWNER_EMAIL) return getUserByEmail(email);
+  let user = getUserByEmail(email);
+  if (!user) {
+    user = {
+      id: `user-${crypto.randomUUID()}`,
+      email: email.trim(),
+      name: "Qouter X Owner",
+      accountRef: undefined,
+      manualAccountPaidUntil: null,
+      ownerLocked: false,
+      passwordHash: hashPassword(password),
+      provider: "local",
+      createdAt: new Date().toISOString()
+    };
+    upsertUser(user);
+  } else if (!user.passwordHash) {
+    user.passwordHash = hashPassword(password);
+    user.ownerLocked = false;
+    if (!user.provider) user.provider = "local";
+    upsertUser(user);
+  }
+  ensureUserAccountRef(user);
+  const existingWorkspaces = getUserWorkspaces(user.id);
+  if (existingWorkspaces.length === 0) {
+    const workspaceId = `workspace-${crypto.randomUUID()}`;
+    const workspace = getWorkspace(workspaceId);
+    workspace.name = workspace.name && workspace.name !== workspace.id ? workspace.name : "Qouter X Owner";
+    workspace.ownerUserId = user.id;
+    upsertWorkspace(workspace);
+    addMembership({ userId: user.id, workspaceId, role: "owner" });
+    getWorkspaceSubscriptionCompany(workspace, user.id);
+  } else {
+    existingWorkspaces.forEach((workspace) => {
+      if (workspace.ownerUserId !== user!.id) {
+        workspace.ownerUserId = user!.id;
+        upsertWorkspace(workspace);
+      }
+      getWorkspaceSubscriptionCompany(workspace, user!.id);
+    });
   }
   return user;
 }
@@ -1478,6 +1561,32 @@ function getJobnestRoot() {
   return path.join(oneDrive, "Jobnest");
 }
 
+function getSupportMessages(ws: WorkspaceRecord) {
+  return ws.supportMessages ?? [];
+}
+
+function saveSupportMessages(workspaceId: string, messages: SupportMessageRecord[]) {
+  const ws = getWorkspace(workspaceId);
+  upsertWorkspace({ ...ws, supportMessages: messages });
+}
+
+function mapSupportThread(workspace: WorkspaceRecord, userId: string, messages: SupportMessageRecord[]) {
+  const user = getUserById(userId);
+  const sorted = messages.slice().sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const last = sorted[sorted.length - 1];
+  return {
+    threadKey: `${workspace.id}:${userId}`,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    userId,
+    userEmail: user?.email ?? sorted[0]?.userEmail ?? "unknown",
+    userName: user?.name ?? sorted[0]?.userName,
+    lastMessageAt: last?.createdAt ?? null,
+    unreadCount: sorted.filter((message) => !message.fromOwner).length,
+    messages: sorted
+  };
+}
+
 function getSystemDataRoot() {
   const root = path.join(DATA_ROOT, "system");
   ensureDir(root);
@@ -1694,6 +1803,280 @@ function getOffcutIntelligenceService() {
   return new OffcutIntelligenceService(getOffcutIntelligenceDb(), getStockMaterialDb(), getBrainCoreDb());
 }
 
+function getMaterialPredictionModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Material Prediction");
+  ensureDir(root);
+  return root;
+}
+
+function getMaterialPredictionDb() {
+  if (!materialPredictionDbSingleton) {
+    materialPredictionDbSingleton = openMaterialPredictionDatabase(getMaterialPredictionModuleRoot());
+  }
+  return materialPredictionDbSingleton;
+}
+
+function getMaterialPredictionService() {
+  return new MaterialPredictionService(getMaterialPredictionDb(), getBrainCoreDb(), getManufacturingMemoryService());
+}
+
+function getPurchasingIntelligenceModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Purchasing Intelligence");
+  ensureDir(root);
+  return root;
+}
+
+function getPurchasingIntelligenceDb() {
+  if (!purchasingIntelligenceDbSingleton) {
+    purchasingIntelligenceDbSingleton = openPurchasingIntelligenceDatabase(getPurchasingIntelligenceModuleRoot());
+  }
+  return purchasingIntelligenceDbSingleton;
+}
+
+function getPurchasingIntelligenceService() {
+  return new PurchasingIntelligenceService(getPurchasingIntelligenceDb(), getBrainCoreDb(), getMaterialPredictionService());
+}
+
+function getProductionQueueBrainModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Production Queue Brain");
+  ensureDir(root);
+  return root;
+}
+
+function getProductionQueueBrainDb() {
+  if (!productionQueueBrainDbSingleton) {
+    productionQueueBrainDbSingleton = openProductionQueueBrainDatabase(getProductionQueueBrainModuleRoot());
+  }
+  return productionQueueBrainDbSingleton;
+}
+
+function getProductionQueueBrainService() {
+  return new ProductionQueueBrainService(getProductionQueueBrainDb(), getBrainCoreDb(), getMaterialPredictionService());
+}
+
+function getLeadTimeIntelligenceModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Lead Time Intelligence");
+  ensureDir(root);
+  return root;
+}
+
+function getLeadTimeIntelligenceDb() {
+  if (!leadTimeIntelligenceDbSingleton) {
+    leadTimeIntelligenceDbSingleton = openLeadTimeIntelligenceDatabase(getLeadTimeIntelligenceModuleRoot());
+  }
+  return leadTimeIntelligenceDbSingleton;
+}
+
+function getLeadTimeIntelligenceService() {
+  return new LeadTimeIntelligenceService(
+    getLeadTimeIntelligenceDb(),
+    getBrainCoreDb(),
+    getProductionQueueBrainService(),
+    getManufacturingMemoryService(),
+    getPartDnaDb()
+  );
+}
+
+function getSheetOptimizerModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Sheet Optimizer");
+  ensureDir(root);
+  return root;
+}
+
+function getSheetOptimizerDb() {
+  if (!sheetOptimizerDbSingleton) {
+    sheetOptimizerDbSingleton = openSheetOptimizerDatabase(getSheetOptimizerModuleRoot());
+  }
+  return sheetOptimizerDbSingleton;
+}
+
+function getSheetOptimizerService() {
+  return new SheetOptimizerService(getSheetOptimizerDb(), getStockMaterialDb(), getBrainCoreDb(), getMaterialPredictionService());
+}
+
+function getDxfErrorDetectionModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "DXF Error Detection");
+  ensureDir(root);
+  return root;
+}
+
+function getDxfErrorDetectionDb() {
+  if (!dxfErrorDetectionDbSingleton) {
+    dxfErrorDetectionDbSingleton = openDxfErrorDetectionDatabase(getDxfErrorDetectionModuleRoot());
+  }
+  return dxfErrorDetectionDbSingleton;
+}
+
+function getDxfErrorDetectionService() {
+  return new DxfErrorDetectionService(getDxfErrorDetectionDb(), getBrainCoreDb());
+}
+
+function getNestingIntelligenceModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Nesting Intelligence");
+  ensureDir(root);
+  return root;
+}
+
+function getNestingIntelligenceDb() {
+  if (!nestingIntelligenceDbSingleton) {
+    nestingIntelligenceDbSingleton = openNestingIntelligenceDatabase(getNestingIntelligenceModuleRoot());
+  }
+  return nestingIntelligenceDbSingleton;
+}
+
+function getNestingIntelligenceService() {
+  return new NestingIntelligenceService(getNestingIntelligenceDb(), getBrainCoreDb(), getSheetOptimizerService());
+}
+
+function getNestingEngineModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Advanced Nesting Engine");
+  ensureDir(root);
+  return root;
+}
+
+function getNestingEngineDb() {
+  if (!nestingEngineDbSingleton) {
+    nestingEngineDbSingleton = openNestingEngineDatabase(getNestingEngineModuleRoot());
+  }
+  return nestingEngineDbSingleton;
+}
+
+function getNestingEngineService() {
+  return new NestingEngineService(getNestingEngineDb(), path.join(getNestingEngineModuleRoot(), "exports"), getBrainCoreDb());
+}
+
+function getNestingExportRoot() {
+  const root = path.join(process.env.QOUTERX_USER_DATA_DIR?.trim() || DATA_ROOT, "exports", "nesting");
+  ensureDir(root);
+  return root;
+}
+
+function getNestingWorkspaceModuleRoot() {
+  const root = path.join(getSystemDataRoot(), "Nesting Workspace");
+  ensureDir(root);
+  return root;
+}
+
+function getNestingWorkspaceDb() {
+  if (!nestingWorkspaceDbSingleton) {
+    nestingWorkspaceDbSingleton = openNestingWorkspaceDatabase(getNestingWorkspaceModuleRoot());
+  }
+  return nestingWorkspaceDbSingleton;
+}
+
+function getNestingWorkspaceService() {
+  return new NestingWorkspaceService(
+    getNestingWorkspaceDb(),
+    getStockMaterialDb(),
+    path.join(getSystemDataRoot(), "exports", "nesting"),
+    getBrainCoreDb()
+  );
+}
+
+function getProductionAssistantService() {
+  return new ProductionAssistantService(
+    getProductionQueueBrainService(),
+    getMaterialPredictionService(),
+    getProfitIntelligenceService(),
+    getOffcutIntelligenceService(),
+    getDxfErrorDetectionService()
+  );
+}
+
+function getQouterXBrainOrchestrator() {
+  return new QouterXBrainOrchestrator({
+    brainCore: getBrainCoreDb(),
+    partDna: getPartDnaBrainService(),
+    dxfErrors: getDxfErrorDetectionService(),
+    offcuts: getOffcutIntelligenceService(),
+    sheetOptimizer: getSheetOptimizerService(),
+    profit: getProfitIntelligenceService(),
+    materialPrediction: getMaterialPredictionService(),
+    purchasing: getPurchasingIntelligenceService(),
+    queue: getProductionQueueBrainService(),
+    leadTime: getLeadTimeIntelligenceService(),
+    manufacturingMemory: getManufacturingMemoryService(),
+    nesting: getNestingIntelligenceService(),
+    cloudSync: getCloudSyncDb(),
+    manualSubscriptions: getManualSubscriptionDb()
+  });
+}
+
+function getEventBrainModules(): BrainModule[] {
+  return [
+    partDnaModule,
+    manufacturingMemoryModule,
+    profitModule,
+    materialPredictionModule,
+    productionQueueModule,
+    leadTimeModule,
+    offcutsModule,
+    sheetOptimizerModule,
+    nestingModule,
+    dxfErrorsModule,
+    purchasingModule,
+    assistantModule
+  ];
+}
+
+function getEventBrainOrchestrator() {
+  if (!eventBrainOrchestratorSingleton) {
+    const brain = getBrainCoreDb();
+    eventBrainOrchestratorSingleton = new EventBrainOrchestrator(
+      brain.eventBus,
+      getEventBrainModules(),
+      brain.cache,
+      brain.taskService
+    );
+  }
+  return eventBrainOrchestratorSingleton;
+}
+
+function buildSyntheticSmartQueueJobFromQuote(workspaceId: string, quote: QuoteRecord): SmartJobRecord | null {
+  const parts = Object.values(quote.sections ?? {}).flatMap((section) => section.parts ?? []);
+  if (!parts.length) return null;
+  const material = parts.find((part) => typeof part.material === "string" && part.material.trim())?.material?.trim() || "Unknown Material";
+  const thickness =
+    parts.find((part) => Number.isFinite(Number(part.thicknessMm)) && Number(part.thicknessMm) > 0)?.thicknessMm ?? null;
+  const cutLength = parts.reduce((sum, part) => sum + (Number(part.cutLengthMm) || 0) * Math.max(1, Number(part.quantity) || 1), 0);
+  const pierceCount = parts.reduce((sum, part) => sum + (Number(part.pierceCount) || 0) * Math.max(1, Number(part.quantity) || 1), 0);
+  const estimatedCutTimeMinutes = Math.max(1, Math.round(cutLength / 900 + pierceCount * 0.12));
+  const partDnaId =
+    parts.find((part) => Number.isFinite(Number(part.partDnaId)) && Number(part.partDnaId) > 0)?.partDnaId ?? null;
+  const totalAreaSqm = parts.reduce(
+    (sum, part) => sum + ((Number(part.lengthMm) || 0) * (Number(part.widthMm) || 0) * Math.max(1, Number(part.quantity) || 1)) / 1_000_000,
+    0
+  );
+  const estimatedSetupTimeMinutes = Math.max(8, Math.min(30, 8 + parts.length * 2));
+  return {
+    id: -Number(String(Date.parse(quote.createdAt) || Date.now()).slice(-8)),
+    workspaceId,
+    legacyJobId: null,
+    customerName: quote.customerName ?? null,
+    customerId: null,
+    jobNumber: quote.quoteNumber,
+    quoteId: quote.id,
+    title: quote.title || `${quote.quoteNumber} lead-time estimate`,
+    status: quote.status === "accepted" ? "ready" : "pending",
+    priority: quote.status === "accepted" ? "urgent" : "normal",
+    dueDate: null,
+    material,
+    thickness,
+    sheetSize: totalAreaSqm > 5 ? "3000x1500" : "2500x1250",
+    estimatedCutTimeMinutes,
+    estimatedSetupTimeMinutes,
+    estimatedPierceCount: pierceCount,
+    estimatedCutLength: cutLength,
+    dxfFilePath: parts.some((part) => part.dxfName || part.geometryHash || part.partDnaId) ? quote.quoteDxfPath ?? `quote:${quote.id}` : null,
+    partDnaId,
+    manualSortOrder: null,
+    actualCutTimeMinutes: null,
+    manuallyMarkedReady: quote.status === "accepted",
+    createdAt: quote.createdAt,
+    updatedAt: quote.createdAt
+  };
+}
+
 function calculateProfitForWorkspaceJob(workspaceId: string, legacyJobId: string) {
   const ws = getWorkspace(workspaceId);
   const legacyJob = ws.jobs.find((entry) => entry.id === legacyJobId);
@@ -1773,11 +2156,17 @@ function recordBrainEvent(input: {
       },
       links: input.links
     });
-    try {
-      getManufacturingMemoryService().ingestEvent(event);
-    } catch (error) {
-      console.error("[manufacturing-memory] ingest failed:", error instanceof Error ? error.message : error);
-    }
+    const timer = setTimeout(() => {
+      try {
+        getManufacturingMemoryService().ingestEvent(event);
+      } catch (error) {
+        console.error("[manufacturing-memory] ingest failed:", error instanceof Error ? error.message : error);
+      }
+      getEventBrainOrchestrator().processPendingEvents(10).catch((error: unknown) => {
+        console.error("[brain] outbox processing failed:", error instanceof Error ? error.message : error);
+      });
+    }, 0);
+    timer.unref?.();
     return event;
   } catch (error) {
     console.error("[brain] event record failed:", error instanceof Error ? error.message : error);
@@ -1999,6 +2388,134 @@ function syncWorkspaceSmartQueue(workspaceId: string) {
     quotes: ws.quotes.map((quote) => ({ id: quote.id, quoteNumber: quote.quoteNumber, status: quote.status })),
     customers: ws.customers.map((customer) => ({ id: customer.id, name: customer.name }))
   });
+}
+
+function buildNestingCandidatesForWorkspace(workspaceId: string, queueJobs: SmartJobRecord[]): NestingPartCandidate[] {
+  const ws = getWorkspace(workspaceId);
+  const legacyJobsById = new Map(ws.jobs.map((job) => [job.id, job]));
+  const candidates: NestingPartCandidate[] = [];
+  for (const job of queueJobs) {
+    if (!job.legacyJobId) continue;
+    const legacyJob = legacyJobsById.get(job.legacyJobId);
+    const parts = legacyJob?.jobDxfParts ?? [];
+    for (const part of parts) {
+      const material = part.material?.trim() || job.material.trim();
+      const thickness = Number(part.thicknessMm ?? job.thickness ?? 0);
+      const width = Number(part.widthMm ?? 0);
+      const height = Number(part.heightMm ?? 0);
+      if (!material || !Number.isFinite(thickness) || thickness <= 0) continue;
+      if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) continue;
+      candidates.push({
+        jobId: job.id,
+        quoteId: job.quoteId ?? null,
+        partDnaId: part.partDnaId ?? job.partDnaId ?? null,
+        quantity: Math.max(1, Number(part.quantity) || 1),
+        width,
+        height,
+        cutLength: Math.max(0, Number(part.cutLengthMm) || 0),
+        pierceCount: Math.max(0, Number(part.pierceCount) || 0),
+        material,
+        thickness
+      });
+    }
+  }
+  return candidates;
+}
+
+function buildBrainRunContext(workspaceId: string) {
+  syncWorkspaceSmartQueue(workspaceId);
+  const ws = getWorkspace(workspaceId);
+  const services = buildSmartQueueServicesForWorkspace(workspaceId);
+  const queueSnapshot = buildSmartQueueSnapshot(getSmartJobQueueDb(), workspaceId, services);
+  const stockSnapshot = getStockSnapshot(getStockMaterialDb());
+  const nestingParts = buildNestingCandidatesForWorkspace(workspaceId, queueSnapshot.jobs);
+  return { ws, services, queueSnapshot, stockSnapshot, nestingParts };
+}
+
+function buildDefaultOffcutRequestForJob(job: SmartJobRecord) {
+  const widthGuess = typeof job.sheetSize === "string" && job.sheetSize.includes("x")
+    ? Number(job.sheetSize.split("x")[0]) || 0
+    : 0;
+  const heightGuess = typeof job.sheetSize === "string" && job.sheetSize.includes("x")
+    ? Number(job.sheetSize.split("x")[1]) || 0
+    : 0;
+  if (!job.material.trim() || !Number.isFinite(Number(job.thickness)) || Number(job.thickness) <= 0 || widthGuess <= 0 || heightGuess <= 0) {
+    return null;
+  }
+  return {
+    material: job.material,
+    thickness: Number(job.thickness),
+    requiredWidth: widthGuess,
+    requiredHeight: heightGuess,
+    jobId: String(job.id),
+    partDnaId: job.partDnaId ?? null,
+    entityLabel: job.title
+  };
+}
+
+function buildDefaultSheetRequestForQuote(quote: QuoteRecord) {
+  const parts = Object.values(quote.sections ?? {}).flatMap((section) => section.parts ?? []);
+  const material = parts.find((part) => typeof part.material === "string" && part.material.trim())?.material?.trim() || "";
+  const thickness = Number(parts.find((part) => Number.isFinite(Number(part.thicknessMm)) && Number(part.thicknessMm) > 0)?.thicknessMm ?? 0);
+  const requiredWidth = Math.max(...parts.map((part) => Number(part.widthMm) || 0), 0);
+  const requiredHeight = Math.max(...parts.map((part) => Number(part.heightMm) || 0), 0);
+  if (!material || thickness <= 0 || requiredWidth <= 0 || requiredHeight <= 0) return null;
+  return {
+    material,
+    thickness,
+    requiredWidth,
+    requiredHeight,
+    quoteId: quote.id
+  };
+}
+
+function runBrainFromEvent(input: {
+  workspaceId: string;
+  eventType: BrainEventType;
+  entityType: string;
+  entityId: string;
+  payload?: Record<string, unknown>;
+}) {
+  const eventType = input.eventType;
+  if (!["dxf_imported", "quote_created", "quote_accepted", "job_created", "job_started", "job_completed", "purchase_order_detected"].includes(eventType)) {
+    return;
+  }
+  try {
+    const context = buildBrainRunContext(input.workspaceId);
+    const orchestrator = getQouterXBrainOrchestrator();
+    const queueJob = input.entityType === "job"
+      ? context.queueSnapshot.jobs.find((entry) => entry.legacyJobId === input.entityId || String(entry.id) === input.entityId)
+      : null;
+    const quote = input.entityType === "quote" ? context.ws.quotes.find((entry) => entry.id === input.entityId) : null;
+    orchestrator.run({
+      workspaceId: input.workspaceId,
+      mode: "quick",
+      triggerEventType: eventType,
+      jobs: context.queueSnapshot.jobs,
+      quotes: context.ws.quotes,
+      stockSnapshot: context.stockSnapshot,
+      services: context.services,
+      nestingParts: context.nestingParts,
+      leadTimeTargetJobId: queueJob?.id ?? null,
+      offcutRequest: queueJob ? buildDefaultOffcutRequestForJob(queueJob) : null,
+      sheetRequest: quote ? buildDefaultSheetRequestForQuote(quote) : null
+    });
+    if (eventType === "job_completed" && input.entityType === "job") {
+      calculateProfitForWorkspaceJob(input.workspaceId, input.entityId);
+      orchestrator.run({
+        workspaceId: input.workspaceId,
+        mode: "module-specific",
+        modules: ["manufacturing_memory", "materials", "purchasing"],
+        jobs: context.queueSnapshot.jobs,
+        quotes: context.ws.quotes,
+        stockSnapshot: context.stockSnapshot,
+        services: context.services,
+        nestingParts: context.nestingParts
+      });
+    }
+  } catch (error) {
+    console.error("[brain-orchestrator] event run failed:", error instanceof Error ? error.message : error);
+  }
 }
 
 function applySmartJobToLegacyWorkspace(workspaceId: string, smartJob: SmartJobRecord) {
@@ -4769,7 +5286,7 @@ app.post("/api/auth/login", (req, res) => {
     res.status(400).json({ error: "email and password required" });
     return;
   }
-  const user = getUserByEmail(email);
+  const user = ensureAppOwnerBootstrap(email, password);
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
     res.status(401).json({ error: "invalid credentials" });
     return;
@@ -7755,6 +8272,143 @@ app.get("/api/brain/recommendations", authRequired, (req: AuthedRequest, res) =>
   res.json({ recommendations });
 });
 
+app.get("/api/brain/dashboard", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  const context = buildBrainRunContext(workspaceId);
+  const dashboard = getQouterXBrainOrchestrator().buildDashboard({
+    workspaceId,
+    jobs: context.queueSnapshot.jobs,
+    stockSnapshot: context.stockSnapshot,
+    syncHealth: getQouterXBrainOrchestrator().buildSyncHealth()
+  });
+  res.json({ dashboard });
+});
+
+app.get("/api/brain/tasks/:id", authRequired, (req: AuthedRequest, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "numeric task id required" });
+    return;
+  }
+  const task = getBrainCoreDb().taskService.get(id);
+  if (!task) {
+    res.status(404).json({ error: "task not found" });
+    return;
+  }
+  res.json({ task });
+});
+
+app.get("/api/brain/outbox", authRequired, (req: AuthedRequest, res) => {
+  res.json({
+    stats: getBrainCoreDb().eventBus.stats(),
+    pending: getBrainCoreDb().eventBus.listPending(Number(req.query?.limit) || 25)
+  });
+});
+
+app.post("/api/brain/run", authRequired, async (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "forbidden" });
+    return;
+  }
+  const modeInput = typeof req.body?.mode === "string" ? req.body.mode.trim() : "quick";
+  const eventMode = (["quick", "full", "module", "entity"].includes(modeInput) ? modeInput : "quick") as EventBrainRunMode;
+  const mode = (modeInput === "full" ? "full" : modeInput === "module" || modeInput === "module-specific" ? "module-specific" : "quick") as BrainRunMode;
+  const requestedModules = Array.isArray(req.body?.modules)
+    ? req.body.modules
+        .map((value: unknown) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value: string) =>
+          ["part_dna", "dxf_errors", "offcuts", "sheet_optimizer", "profit", "materials", "purchasing", "queue", "lead_time", "manufacturing_memory", "nesting"].includes(value)
+        ) as BrainModuleName[]
+    : undefined;
+  try {
+    const eventResultPromise = getEventBrainOrchestrator().run({
+      mode: eventMode,
+      moduleName: typeof req.body?.moduleName === "string" ? req.body.moduleName.trim() : requestedModules?.[0] ?? null,
+      entityType: typeof req.body?.entityType === "string" ? req.body.entityType.trim() : null,
+      entityId: typeof req.body?.entityId === "string" ? req.body.entityId.trim() : null,
+      workspaceId
+    });
+    const context = buildBrainRunContext(workspaceId);
+    const leadTimeTargetJobId = Number.isFinite(Number(req.body?.leadTimeTargetJobId)) ? Number(req.body.leadTimeTargetJobId) : null;
+    const result = getQouterXBrainOrchestrator().run({
+      workspaceId,
+      mode,
+      modules: requestedModules,
+      triggerEventType: typeof req.body?.triggerEventType === "string" ? req.body.triggerEventType.trim() : null,
+      jobs: context.queueSnapshot.jobs,
+      quotes: context.ws.quotes,
+      stockSnapshot: context.stockSnapshot,
+      services: context.services,
+      nestingParts: context.nestingParts,
+      leadTimeTargetJobId,
+      dxfInput:
+        typeof req.body?.rawDxf === "string" && req.body.rawDxf.trim()
+          ? {
+              fileId: typeof req.body?.fileId === "string" && req.body.fileId.trim() ? req.body.fileId.trim() : `brain-${Date.now()}`,
+              rawDxf: req.body.rawDxf,
+              fileName: typeof req.body?.fileName === "string" ? req.body.fileName.trim() : undefined,
+              partName: typeof req.body?.partName === "string" ? req.body.partName.trim() : null,
+              material: typeof req.body?.material === "string" ? req.body.material.trim() : null,
+              thickness: Number.isFinite(Number(req.body?.thickness)) ? Number(req.body.thickness) : null,
+              customerId: typeof req.body?.customerId === "string" ? req.body.customerId.trim() : null,
+              customerName: typeof req.body?.customerName === "string" ? req.body.customerName.trim() : null,
+              quoteId: typeof req.body?.quoteId === "string" ? req.body.quoteId.trim() : null,
+              quotedPrice: Number.isFinite(Number(req.body?.quotedPrice)) ? Number(req.body.quotedPrice) : null,
+              entityType: typeof req.body?.entityType === "string" ? req.body.entityType.trim() : null,
+              entityId: typeof req.body?.entityId === "string" ? req.body.entityId.trim() : null
+            }
+          : null,
+      offcutRequest:
+        typeof req.body?.offcutRequest === "object" && req.body.offcutRequest
+          ? {
+              material: String(req.body.offcutRequest.material ?? "").trim(),
+              thickness: Number(req.body.offcutRequest.thickness),
+              requiredWidth: Number(req.body.offcutRequest.requiredWidth),
+              requiredHeight: Number(req.body.offcutRequest.requiredHeight),
+              jobId: typeof req.body.offcutRequest.jobId === "string" ? req.body.offcutRequest.jobId.trim() : null,
+              quoteId: typeof req.body.offcutRequest.quoteId === "string" ? req.body.offcutRequest.quoteId.trim() : null,
+              partDnaId: Number.isFinite(Number(req.body.offcutRequest.partDnaId)) ? Number(req.body.offcutRequest.partDnaId) : null,
+              entityLabel: typeof req.body.offcutRequest.entityLabel === "string" ? req.body.offcutRequest.entityLabel.trim() : null
+            }
+          : null,
+      sheetRequest:
+        typeof req.body?.sheetRequest === "object" && req.body.sheetRequest
+          ? {
+              material: String(req.body.sheetRequest.material ?? "").trim(),
+              thickness: Number(req.body.sheetRequest.thickness),
+              requiredWidth: Number(req.body.sheetRequest.requiredWidth),
+              requiredHeight: Number(req.body.sheetRequest.requiredHeight),
+              jobId: typeof req.body.sheetRequest.jobId === "string" ? req.body.sheetRequest.jobId.trim() : null,
+              quoteId: typeof req.body.sheetRequest.quoteId === "string" ? req.body.sheetRequest.quoteId.trim() : null
+            }
+          : null
+    });
+    const dashboard = getQouterXBrainOrchestrator().buildDashboard({
+      workspaceId,
+      jobs: context.queueSnapshot.jobs,
+      stockSnapshot: context.stockSnapshot,
+      syncHealth: getQouterXBrainOrchestrator().buildSyncHealth()
+    });
+    const eventResult = await eventResultPromise;
+    res.json({ result, eventResult, taskId: eventResult.taskId, dashboard });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to run brain orchestrator." });
+  }
+});
+
 app.post("/api/brain/offcuts/find-match", authRequired, (req: AuthedRequest, res) => {
   const workspaceId = getRequestedWorkspaceId(req);
   if (!workspaceId) {
@@ -7952,6 +8606,1109 @@ app.post("/api/brain/profit/calculate/:jobId", authRequired, (req: AuthedRequest
   }
   const result = calculateProfitForWorkspaceJob(workspaceId, legacyJob.id);
   res.json(result);
+});
+
+app.get("/api/brain/materials/forecast", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const forecastPeriodDays = Number.isFinite(Number(req.query.days)) ? Number(req.query.days) : undefined;
+  const forecasts = getMaterialPredictionService().listForecasts({
+    workspaceId,
+    forecastPeriodDays,
+    limit: Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 200
+  });
+  res.json({ forecasts });
+});
+
+app.get("/api/brain/materials/shortages", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const shortages = getMaterialPredictionService().getShortages({
+    workspaceId,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    forecastPeriodDays: Number.isFinite(Number(req.query.days)) ? Number(req.query.days) : undefined
+  });
+  res.json({ shortages });
+});
+
+app.post("/api/brain/materials/rebuild-forecast", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const ws = getWorkspace(workspaceId);
+  const result = getMaterialPredictionService().rebuildForecast({
+    workspaceId,
+    jobs: ws.jobs,
+    quotes: ws.quotes,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    forecastPeriodsDays: Array.isArray(req.body?.forecastPeriodsDays)
+      ? req.body.forecastPeriodsDays.map((entry: unknown) => Number(entry)).filter((entry: number) => Number.isFinite(entry) && entry > 0)
+      : undefined
+  });
+  res.json({ ok: true, ...result });
+});
+
+app.get("/api/brain/purchasing/recommendations", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const stockSnapshot = getStockSnapshot(getStockMaterialDb());
+  getPurchasingIntelligenceService().syncRecommendations({ workspaceId, stockSnapshot });
+  const recommendations = getPurchasingIntelligenceService().listRecommendations({
+    workspaceId,
+    status: typeof req.query.status === "string" ? (req.query.status as "open" | "ordered" | "dismissed" | "all") : "open",
+    limit: Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 100
+  });
+  res.json({ recommendations });
+});
+
+app.post("/api/brain/purchasing/recommendations/:id/mark-ordered", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  try {
+    const recommendation = getPurchasingIntelligenceService().markOrdered(workspaceId, Number(req.params.id));
+    res.json({ ok: true, recommendation });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to mark purchase ordered." });
+  }
+});
+
+app.post("/api/brain/purchasing/recommendations/:id/dismiss", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  try {
+    const recommendation = getPurchasingIntelligenceService().dismiss(workspaceId, Number(req.params.id));
+    res.json({ ok: true, recommendation });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to dismiss purchase recommendation." });
+  }
+});
+
+app.post("/api/brain/queue/plan", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  syncWorkspaceSmartQueue(workspaceId);
+  const jobs = listSmartJobs(getSmartJobQueueDb(), workspaceId);
+  const result = getProductionQueueBrainService().createPlan({
+    workspaceId,
+    jobs,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    services: buildSmartQueueServicesForWorkspace(workspaceId),
+    title: typeof req.body?.title === "string" ? req.body.title.trim() : undefined
+  });
+  res.json(result);
+});
+
+app.get("/api/brain/queue/current", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  syncWorkspaceSmartQueue(workspaceId);
+  const jobs = listSmartJobs(getSmartJobQueueDb(), workspaceId);
+  const scores = getProductionQueueBrainService().scoreJobs({
+    workspaceId,
+    jobs,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    services: buildSmartQueueServicesForWorkspace(workspaceId)
+  });
+  const plan = getProductionQueueBrainService().getCurrentPlan(workspaceId);
+  res.json({ plan, scores });
+});
+
+app.post("/api/brain/queue/plans/:id/start", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const planId = Number(req.params.id);
+  if (!workspaceId || !Number.isFinite(planId)) {
+    res.status(400).json({ error: "workspaceId and numeric plan id required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const plan = getProductionQueueBrainService().startPlan(workspaceId, planId);
+  if (!plan) {
+    res.status(404).json({ error: "plan not found" });
+    return;
+  }
+  res.json({ plan });
+});
+
+app.post("/api/brain/queue/plans/:id/complete", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const planId = Number(req.params.id);
+  if (!workspaceId || !Number.isFinite(planId)) {
+    res.status(400).json({ error: "workspaceId and numeric plan id required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const plan = getProductionQueueBrainService().completePlan(workspaceId, planId);
+  if (!plan) {
+    res.status(404).json({ error: "plan not found" });
+    return;
+  }
+  res.json({ plan });
+});
+
+app.post("/api/brain/lead-time/predict", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  syncWorkspaceSmartQueue(workspaceId);
+  const ws = getWorkspace(workspaceId);
+  const queueSnapshot = buildSmartQueueSnapshot(getSmartJobQueueDb(), workspaceId, buildSmartQueueServicesForWorkspace(workspaceId));
+  const workerCount = Math.max(1, ws.workers.filter((worker) => worker.active !== false).length || 1);
+
+  let target = Number.isFinite(Number(req.body?.jobId))
+    ? queueSnapshot.jobs.find((job) => job.id === Number(req.body.jobId)) ?? null
+    : null;
+  let quoteId: string | null = null;
+  if (!target && typeof req.body?.quoteId === "string" && req.body.quoteId.trim()) {
+    const quote = ws.quotes.find((entry) => entry.id === req.body.quoteId.trim()) ?? null;
+    if (quote) {
+      target = buildSyntheticSmartQueueJobFromQuote(workspaceId, quote);
+      quoteId = quote.id;
+    }
+  }
+
+  if (!target) {
+    res.status(404).json({ error: "job or quote not found" });
+    return;
+  }
+
+  const prediction = getLeadTimeIntelligenceService().predict({
+    workspaceId,
+    target,
+    jobs: queueSnapshot.jobs,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    workerCount,
+    quoteId
+  });
+  res.json({ prediction });
+});
+
+app.get("/api/brain/lead-time/:jobId", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const jobId = Number(req.params.jobId);
+  if (!workspaceId || !Number.isFinite(jobId)) {
+    res.status(400).json({ error: "workspaceId and numeric jobId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const prediction = getLeadTimeIntelligenceService().getLatestForJob(workspaceId, jobId);
+  if (!prediction) {
+    res.status(404).json({ error: "prediction not found" });
+    return;
+  }
+  res.json({ prediction });
+});
+
+app.post("/api/brain/sheets/optimize", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  try {
+    const result = getSheetOptimizerService().optimize({
+      workspaceId,
+      material: typeof req.body?.material === "string" ? req.body.material.trim() : "",
+      thickness: Number(req.body?.thickness),
+      requiredWidth: Number(req.body?.requiredWidth),
+      requiredHeight: Number(req.body?.requiredHeight),
+      jobId: typeof req.body?.jobId === "string" ? req.body.jobId.trim() : null,
+      quoteId: typeof req.body?.quoteId === "string" ? req.body.quoteId.trim() : null
+    });
+    res.json({ result });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to optimize sheet source." });
+  }
+});
+
+app.get("/api/brain/sheets/results/:id", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const resultId = Number(req.params.id);
+  if (!workspaceId || !Number.isFinite(resultId)) {
+    res.status(400).json({ error: "workspaceId and numeric result id required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const result = getSheetOptimizerService().getResult(workspaceId, resultId);
+  if (!result) {
+    res.status(404).json({ error: "result not found" });
+    return;
+  }
+  res.json({ result });
+});
+
+app.post("/api/brain/nesting/recommend", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  syncWorkspaceSmartQueue(workspaceId);
+  const services = buildSmartQueueServicesForWorkspace(workspaceId);
+  const jobs = listSmartJobs(getSmartJobQueueDb(), workspaceId);
+  const scoredJobs = getProductionQueueBrainService().scoreJobs({
+    workspaceId,
+    jobs,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb()),
+    services
+  });
+  const parts = buildNestingCandidatesForWorkspace(workspaceId, scoredJobs);
+  if (!parts.length) {
+    res.status(400).json({ error: "No DXF parts found on queued jobs for nesting." });
+    return;
+  }
+  const result = getNestingIntelligenceService().recommend({
+    workspaceId,
+    jobs: scoredJobs,
+    parts,
+    stockSnapshot: getStockSnapshot(getStockMaterialDb())
+  });
+  res.json(result);
+});
+
+app.get("/api/brain/nesting/plans", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  res.json({ plans: getNestingIntelligenceService().listPlans(workspaceId) });
+});
+
+app.post("/api/brain/nesting/plans/:id/approve", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const planId = Number(req.params.id);
+  if (!workspaceId || !Number.isFinite(planId)) {
+    res.status(400).json({ error: "workspaceId and numeric plan id required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const plan = getNestingIntelligenceService().approvePlan(workspaceId, planId);
+  if (!plan) {
+    res.status(404).json({ error: "plan not found" });
+    return;
+  }
+  res.json({ plan });
+});
+
+app.post("/api/nesting/workspaces", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req);
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json({ workspace: getNestingWorkspaceService().createWorkspace({ ...(req.body ?? {}), workspaceId: workspaceId || null }) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create nesting workspace." });
+  }
+});
+
+app.get("/api/nesting/workspaces", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = typeof req.query?.workspaceId === "string" ? req.query.workspaceId.trim() : "";
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json({ workspaces: getNestingWorkspaceService().listWorkspaces(workspaceId || null) });
+  } catch (error) {
+    console.error("[nesting-workspace] list failed:", error instanceof Error ? error.message : error);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to load nesting workspaces." });
+  }
+});
+
+app.get("/api/nesting/workspaces/:id", authRequired, (req: AuthedRequest, res) => {
+  const workspace = getNestingWorkspaceService().getWorkspace(Number(req.params.id));
+  if (!workspace) {
+    res.status(404).json({ error: "nesting workspace not found" });
+    return;
+  }
+  if (workspace.workspaceId && !hasMembership(req.userId as string, workspace.workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  res.json({ workspace });
+});
+
+app.patch("/api/nesting/workspaces/:id", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const current = getNestingWorkspaceService().getWorkspace(Number(req.params.id));
+    if (current?.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json({ workspace: getNestingWorkspaceService().updateWorkspace(Number(req.params.id), req.body ?? {}) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to update nesting workspace." });
+  }
+});
+
+app.post("/api/nesting/workspaces/:id/parts", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const part = getNestingWorkspaceService().addPart(id, req.body ?? {});
+    res.json({ part, workspace: getNestingWorkspaceService().getWorkspace(id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to add nesting part." });
+  }
+});
+
+app.post("/api/nesting/geometry-preview", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const rawDxf = typeof req.body?.rawDxf === "string" ? req.body.rawDxf : "";
+    if (!rawDxf.trim()) {
+      res.status(400).json({ error: "rawDxf is required" });
+      return;
+    }
+    const geometry = extractDxfGeometry(rawDxf, Number(req.body?.width ?? 100), Number(req.body?.height ?? 100));
+    res.json({
+      geometry: {
+        width: geometry.width,
+        height: geometry.height,
+        outerContour: geometry.outerContour,
+        holes: geometry.holes,
+        simplifiedPolygon: geometry.simplifiedPolygon,
+        segments: geometry.segments.slice(0, 600),
+        originalEntities: geometry.originalEntities,
+        preview: geometry.simplifiedPolygon
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to parse DXF geometry." });
+  }
+});
+
+app.patch("/api/nesting/workspaces/:id/parts/:partId", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const part = getNestingWorkspaceService().updatePart(id, Number(req.params.partId), req.body ?? {});
+    res.json({ part, workspace: getNestingWorkspaceService().getWorkspace(id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to update nesting part." });
+  }
+});
+
+app.delete("/api/nesting/workspaces/:id/parts/:partId", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    getNestingWorkspaceService().deletePart(id, Number(req.params.partId));
+    res.json({ ok: true, workspace: getNestingWorkspaceService().getWorkspace(id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to delete nesting part." });
+  }
+});
+
+app.post("/api/nesting/workspaces/:id/auto-nest", authRequired, async (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json(await getNestingWorkspaceService().autoNestInWorker(id));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to auto nest workspace." });
+  }
+});
+
+app.patch("/api/nesting/workspaces/:id/placements", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json(getNestingWorkspaceService().savePlacements(id, Array.isArray(req.body?.placements) ? req.body.placements : []));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to save nesting placements." });
+  }
+});
+
+app.post("/api/nesting/workspaces/:id/export-dxf", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json(getNestingWorkspaceService().exportDxf(id));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to export nesting DXF." });
+  }
+});
+
+app.get("/api/nesting/offcuts", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const material = typeof req.query?.material === "string" ? req.query.material.trim() : undefined;
+    const thickness = typeof req.query?.thickness === "string" && req.query.thickness.trim() ? Number(req.query.thickness) : undefined;
+    res.json({ offcuts: getNestingWorkspaceService().listOffcuts({ material, thickness, status: "all" }) });
+  } catch (error) {
+    console.error("[nesting-workspace] offcut list failed:", error instanceof Error ? error.message : error);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to load nesting offcuts." });
+  }
+});
+
+app.post("/api/nesting/offcuts", authRequired, (req: AuthedRequest, res) => {
+  try {
+    res.json({ offcut: getNestingWorkspaceService().createOffcut(req.body ?? {}) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create nesting offcut." });
+  }
+});
+
+app.post("/api/nesting/offcuts/recommend", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = Number(req.body?.workspaceId);
+    res.json(getNestingWorkspaceService().recommendOffcuts({
+      workspaceId: Number.isFinite(workspaceId) && workspaceId > 0 ? workspaceId : null,
+      material: String(req.body?.material ?? "").trim(),
+      thickness: Number(req.body?.thickness),
+      requiredWidth: Number(req.body?.requiredWidth),
+      requiredHeight: Number(req.body?.requiredHeight),
+      requiredArea: Number(req.body?.requiredArea)
+    }));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to recommend offcuts." });
+  }
+});
+
+app.get("/api/nesting/history", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = typeof req.query?.workspaceId === "string" ? req.query.workspaceId.trim() : "";
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json({ history: getNestingWorkspaceService().history(workspaceId || null) });
+  } catch (error) {
+    console.error("[nesting-workspace] history failed:", error instanceof Error ? error.message : error);
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to load nesting history." });
+  }
+});
+
+app.post("/api/nesting/workspaces/:id/create-offcuts", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const current = getNestingWorkspaceService().getWorkspace(id);
+    if (!current) {
+      res.status(404).json({ error: "nesting workspace not found" });
+      return;
+    }
+    if (current.workspaceId && !hasMembership(req.userId as string, current.workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    res.json({ offcuts: getNestingWorkspaceService().createSuggestedOffcuts(id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create nesting offcuts." });
+  }
+});
+
+app.post("/api/nesting/create", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req) || (typeof req.body?.workspaceId === "string" ? req.body.workspaceId.trim() : "");
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const plan = getNestingEngineService().create({ ...(req.body ?? {}), workspaceId });
+    res.json({ job: plan, plan });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create nesting job." });
+  }
+});
+
+app.post("/api/nesting/program/run", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req) || (typeof req.body?.workspaceId === "string" ? req.body.workspaceId.trim() : "");
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const input = { ...(req.body ?? {}), workspaceId } as CypNestProgramInput;
+    const result = new CypNestProgramService().run(input);
+    if (workspaceId) {
+      recordBrainEvent({
+        workspaceId,
+        eventType: "nesting_completed",
+        entityType: "nesting_program",
+        entityId: result.report.strategyName,
+        payload: {
+          source: "recovered-cypnest-symbols",
+          strategyName: result.report.strategyName,
+          usagePercent: result.plan.usagePercent,
+          wastePercent: result.plan.wastePercent,
+          partsComplete: result.report.partsComplete,
+          totalParts: result.report.totalParts
+        }
+      });
+    }
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to run nesting program." });
+  }
+});
+
+function runNestingInWorker(input: { parts: NestPart[]; sheet: SheetSource; customerName: string; nestName: string; maxOptimizationMs: number; angleStepDegrees?: number }) {
+  return new Promise<NestResult>((resolve, reject) => {
+    const worker = new Worker(new URL("./nesting-run-worker.js", import.meta.url), { workerData: input });
+    const timeout = setTimeout(() => {
+      worker.terminate().catch(() => undefined);
+      reject(new Error("Nesting worker timed out"));
+    }, Math.max(1_000, input.maxOptimizationMs + 5_000));
+    worker.once("message", (message: { result?: NestResult; error?: string }) => {
+      clearTimeout(timeout);
+      if (message.error) reject(new Error(message.error));
+      else if (message.result) resolve(message.result);
+      else reject(new Error("Nesting worker returned no result"));
+    });
+    worker.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    worker.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code !== 0) reject(new Error(`Nesting worker exited with code ${code}`));
+    });
+  });
+}
+
+app.post("/api/nesting/run", authRequired, async (req: AuthedRequest, res) => {
+  try {
+    const body = req.body ?? {};
+    const workspaceId = getRequestedWorkspaceId(req);
+    const sheet: SheetSource = {
+      id: typeof body.sheet?.id === "string" ? body.sheet.id : undefined,
+      type: body.sheet?.type === "offcut" ? "offcut" : "sheet",
+      width: Number(body.sheet?.width ?? body.sheetWidth),
+      height: Number(body.sheet?.height ?? body.sheetHeight),
+      border: Math.max(0, Number(body.sheet?.border ?? body.border ?? 0)),
+      spacing: Math.max(0, Number(body.sheet?.spacing ?? body.spacing ?? 0)),
+      kerf: Math.max(0, Number(body.sheet?.kerf ?? body.kerf ?? 0))
+    };
+    if (!Number.isFinite(sheet.width) || sheet.width <= 0 || !Number.isFinite(sheet.height) || sheet.height <= 0) {
+      res.status(400).json({ error: "sheet width and height are required" });
+      return;
+    }
+    const rawParts = Array.isArray(body.parts) ? body.parts : [];
+    const parts: NestPart[] = rawParts.length
+      ? rawParts.map((part: Record<string, unknown>, index: number) => ({
+          id: typeof part.id === "string" ? part.id : `part-${index + 1}`,
+          name: typeof part.name === "string" ? part.name : `Part ${index + 1}`,
+          quantity: Math.max(1, Math.round(Number(part.quantity) || 1)),
+          allowRotation: part.allowRotation === false ? false : true,
+          polygon: Array.isArray(part.polygon)
+            ? part.polygon.map((point: Record<string, unknown>) => ({ x: Number(point.x), y: Number(point.y) }))
+            : [
+                { x: 0, y: 0 },
+                { x: Number(part.width ?? 300), y: 0 },
+                { x: Number(part.width ?? 300), y: Number(part.height ?? 200) },
+                { x: 0, y: Number(part.height ?? 200) }
+              ]
+        }))
+      : [
+          {
+            id: "part-a",
+            name: "300x200 Plate",
+            quantity: 4,
+            polygon: [
+              { x: 0, y: 0 },
+              { x: 300, y: 0 },
+              { x: 300, y: 200 },
+              { x: 0, y: 200 }
+            ]
+          },
+          {
+            id: "part-b",
+            name: "600x120 Strip",
+            quantity: 2,
+            polygon: [
+              { x: 0, y: 0 },
+              { x: 600, y: 0 },
+              { x: 600, y: 120 },
+              { x: 0, y: 120 }
+            ]
+          }
+        ];
+    const result = await runNestingInWorker({
+      parts,
+      sheet,
+      customerName: typeof body.customerName === "string" ? body.customerName : "Customer",
+      nestName: typeof body.nestName === "string" ? body.nestName : "Nest",
+      maxOptimizationMs: Number(body.maxOptimizationMs) || 10000,
+      angleStepDegrees: Number(body.angleStepDegrees) || undefined
+    });
+    if ((result.heatScore ?? 0) >= 45 || result.warnings.some((warning) => /heat|warp|burn|thin web/i.test(warning))) {
+      try {
+        getBrainCoreDb().eventService.recordEvent({
+          eventType: "nesting_heat_warning",
+          entityType: "nesting_studio",
+          entityId: workspaceId ?? "local",
+          payload: {
+            heatScore: result.heatScore,
+            heatZones: result.heatZones,
+            warnings: result.warnings.filter((warning) => /heat|warp|burn|thin web/i.test(warning))
+          }
+        });
+      } catch {
+        // Heat warnings should not block nesting output.
+      }
+    }
+    res.json({ result });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to run nesting." });
+  }
+});
+
+app.post("/api/nesting/export", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req);
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const customerName = sanitizeName(String(req.body?.customerName ?? "Customer")) || "Customer";
+    const nestName = sanitizeName(String(req.body?.nestName ?? "Nest")) || "Nest";
+    const dxf = typeof req.body?.dxf === "string" && req.body.dxf.trim() ? req.body.dxf : "";
+    if (!dxf) {
+      res.status(400).json({ error: "dxf is required" });
+      return;
+    }
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    const folder = path.join(getNestingExportRoot(), customerName);
+    ensureDir(folder);
+    const exportFileName = `${customerName}_${nestName}_${stamp}.dxf`;
+    const exportPath = path.join(folder, exportFileName);
+    fs.writeFileSync(exportPath, dxf, "utf8");
+    if (workspaceId) {
+      recordBrainEvent({
+        workspaceId,
+        eventType: "nesting_exported",
+        entityType: "nesting_studio",
+        entityId: exportFileName,
+        payload: { customerName, nestName, exportPath }
+      });
+    }
+    res.json({ exportPath, exportFileName, exportFolder: folder });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to export nesting DXF." });
+  }
+});
+
+app.post("/api/nesting/studio/save", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req) || (typeof req.body?.workspaceId === "string" ? req.body.workspaceId.trim() : "");
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const db = getNestingEngineDb();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS nesting_studio_manual_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        workspaceId TEXT,
+        customerName TEXT NOT NULL,
+        payloadJson TEXT NOT NULL,
+        usagePercent REAL NOT NULL,
+        wastePercent REAL NOT NULL,
+        warningsJson TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_nesting_studio_manual_workspace ON nesting_studio_manual_results(workspaceId, updatedAt DESC);
+    `);
+    const result = req.body?.result;
+    if (!result || !Array.isArray(result.placements)) {
+      res.status(400).json({ error: "result with placements is required" });
+      return;
+    }
+    const selectedOffcutId = Number(req.body?.selectedOffcutId);
+    const now = new Date().toISOString();
+    const insert = db.prepare(
+      `INSERT INTO nesting_studio_manual_results
+       (workspaceId, customerName, payloadJson, usagePercent, wastePercent, warningsJson, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      workspaceId || null,
+      String(req.body?.customerName ?? "Customer"),
+      JSON.stringify(result),
+      Number(result.usagePercent) || 0,
+      Number(result.wastePercent) || 0,
+      JSON.stringify(Array.isArray(result.warnings) ? result.warnings : []),
+      now,
+      now
+    );
+    if (workspaceId && Number.isFinite(selectedOffcutId) && selectedOffcutId > 0) {
+      recordBrainEvent({
+        workspaceId,
+        eventType: "offcut_selected",
+        entityType: "nesting_offcut",
+        entityId: String(selectedOffcutId),
+        payload: { source: "nesting_studio", customerName: String(req.body?.customerName ?? "Customer") }
+      });
+    }
+    res.json({ ok: true, id: Number(insert.lastInsertRowid) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to save manual nesting placements." });
+  }
+});
+
+app.post("/api/nesting/studio/offcut-event", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req);
+    if (!workspaceId) {
+      res.json({ ok: true });
+      return;
+    }
+    if (!hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const eventType = req.body?.eventType === "offcut_selected" ? "offcut_selected" : "offcut_recommended";
+    const offcutId = Number(req.body?.offcutId);
+    if (!Number.isFinite(offcutId) || offcutId <= 0) {
+      res.status(400).json({ error: "offcutId required" });
+      return;
+    }
+    recordBrainEvent({
+      workspaceId,
+      eventType,
+      entityType: "nesting_offcut",
+      entityId: String(offcutId),
+      payload: {
+        source: "nesting_studio",
+        wastePercent: Number(req.body?.wastePercent) || 0,
+        estimatedSaving: Number(req.body?.estimatedSaving) || 0,
+        rotatedFit: Boolean(req.body?.rotatedFit)
+      }
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to record offcut event." });
+  }
+});
+
+app.post("/api/nesting/studio/create-leftover-offcut", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const workspaceId = getRequestedWorkspaceId(req);
+    if (workspaceId && !hasMembership(req.userId as string, workspaceId)) {
+      res.status(403).json({ error: "membership required" });
+      return;
+    }
+    const width = Number(req.body?.width);
+    const height = Number(req.body?.height);
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+      res.status(400).json({ error: "valid leftover width and height required" });
+      return;
+    }
+    const offcut = getNestingWorkspaceService().createOffcut({
+      sourceWorkspaceId: null,
+      sourceJobId: typeof req.body?.sourceJobId === "string" ? req.body.sourceJobId : "nesting-studio",
+      sourceCustomerId: typeof req.body?.sourceCustomerId === "string" ? req.body.sourceCustomerId : null,
+      material: String(req.body?.material ?? "Mild Steel"),
+      thickness: Number(req.body?.thickness) || 1,
+      width,
+      height,
+      shapeJson: typeof req.body?.shapeJson === "string" ? req.body.shapeJson : null,
+      previewJson: typeof req.body?.previewJson === "string" ? req.body.previewJson : null,
+      location: typeof req.body?.location === "string" ? req.body.location : "Nesting Studio leftovers",
+      status: "available"
+    });
+    if (workspaceId && offcut) {
+      recordBrainEvent({
+        workspaceId,
+        eventType: "offcut_created",
+        entityType: "nesting_offcut",
+        entityId: String(offcut.id),
+        payload: {
+          source: "nesting_studio",
+          material: offcut.material,
+          thickness: offcut.thickness,
+          width: offcut.width,
+          height: offcut.height
+        }
+      });
+    }
+    res.json({ offcut });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to create leftover offcut." });
+  }
+});
+
+app.post("/api/nesting/:id/optimize", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "numeric nesting id required" });
+      return;
+    }
+    const plan = getNestingEngineService().optimize(id);
+    res.json({ plan });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to optimize nesting job." });
+  }
+});
+
+app.get("/api/nesting/:id", authRequired, (req: AuthedRequest, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "numeric nesting id required" });
+    return;
+  }
+  const plan = getNestingEngineService().get(id);
+  if (!plan) {
+    res.status(404).json({ error: "nesting job not found" });
+    return;
+  }
+  res.json({ plan });
+});
+
+app.post("/api/nesting/:id/export-dxf", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "numeric nesting id required" });
+      return;
+    }
+    const plan = getNestingEngineService().exportDxf(id);
+    res.json({ plan, dxfExportPath: plan.dxfExportPath });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to export nested DXF." });
+  }
+});
+
+app.patch("/api/nesting/:id/settings", authRequired, (req: AuthedRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      res.status(400).json({ error: "numeric nesting id required" });
+      return;
+    }
+    const plan = getNestingEngineService().updateSettings(id, req.body ?? {});
+    res.json({ plan });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to update nesting settings." });
+  }
+});
+
+app.get("/api/nesting/:id/warnings", authRequired, (req: AuthedRequest, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "numeric nesting id required" });
+    return;
+  }
+  res.json({ warnings: getNestingEngineService().getWarnings(id) });
+});
+
+app.post("/api/brain/assistant/ask", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
+  syncWorkspaceSmartQueue(workspaceId);
+  const ws = getWorkspace(workspaceId);
+  const services = buildSmartQueueServicesForWorkspace(workspaceId);
+  const queueSnapshot = buildSmartQueueSnapshot(getSmartJobQueueDb(), workspaceId, services);
+  const stockSnapshot = getStockSnapshot(getStockMaterialDb());
+  const response = getProductionAssistantService().ask({
+    workspaceId,
+    question,
+    queueSnapshot,
+    stockSnapshot,
+    currentPlan: getProductionQueueBrainService().getCurrentPlan(workspaceId),
+    shortages: getMaterialPredictionService().getShortages({ workspaceId, stockSnapshot }),
+    profitService: getProfitIntelligenceService(),
+    offcutService: getOffcutIntelligenceService(),
+    dxfErrorService: getDxfErrorDetectionService(),
+    customers: ws.customers,
+    quotes: ws.quotes
+  });
+  res.json(response);
+});
+
+app.post("/api/brain/dxf/check", authRequired, storageUpload.single("file"), (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  try {
+    const rawDxf =
+      req.file?.buffer
+        ? decodeDxfBuffer(req.file.buffer)
+        : typeof req.body?.rawDxf === "string"
+        ? req.body.rawDxf
+        : "";
+    const dxfFileId =
+      (req.file?.originalname?.trim() || (typeof req.body?.dxfFileId === "string" ? req.body.dxfFileId.trim() : "")) ||
+      `dxf-${Date.now()}.dxf`;
+    const result = getDxfErrorDetectionService().checkDxf({
+      workspaceId,
+      dxfFileId,
+      rawDxf,
+      partDnaId: Number.isFinite(Number(req.body?.partDnaId)) ? Number(req.body.partDnaId) : null,
+      thickness: Number.isFinite(Number(req.body?.thickness)) ? Number(req.body.thickness) : null
+    });
+    res.json({ result });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Failed to check DXF." });
+  }
+});
+
+app.get("/api/brain/dxf/:id/errors", authRequired, (req: AuthedRequest, res) => {
+  const workspaceId = getRequestedWorkspaceId(req);
+  const dxfFileId = decodeURIComponent(String(req.params.id ?? "")).trim();
+  if (!workspaceId || !dxfFileId) {
+    res.status(400).json({ error: "workspaceId and dxf file id required" });
+    return;
+  }
+  if (!hasMembership(req.userId as string, workspaceId)) {
+    res.status(403).json({ error: "membership required" });
+    return;
+  }
+  const result = getDxfErrorDetectionService().listReports(workspaceId, dxfFileId);
+  res.json({ result });
 });
 
 app.patch("/api/brain/recommendations/:id", authRequired, (req: AuthedRequest, res) => {
@@ -9437,6 +11194,85 @@ app.post("/api/billing/manual-payment", authRequired, (req: AuthedRequest, res) 
   });
 });
 
+app.get("/api/support/threads", authRequired, (req: AuthedRequest, res) => {
+  const requestedWorkspaceId = typeof req.query.workspaceId === "string" ? req.query.workspaceId : "";
+  const requesterId = req.userId as string;
+  const owner = isAppOwner(requesterId);
+
+  if (!owner && !requestedWorkspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!owner && !hasMembership(requesterId, requestedWorkspaceId)) {
+    res.status(403).json({ error: "workspace access required" });
+    return;
+  }
+
+  const workspaces = owner ? getAllWorkspaces() : [getWorkspace(requestedWorkspaceId)];
+  const threads = workspaces.flatMap((workspace) => {
+    const messages = getSupportMessages(workspace).filter((message) =>
+      owner ? true : message.userId === requesterId
+    );
+    const grouped = new Map<string, SupportMessageRecord[]>();
+    for (const message of messages) {
+      if (!grouped.has(message.userId)) grouped.set(message.userId, []);
+      grouped.get(message.userId)!.push(message);
+    }
+    return Array.from(grouped.entries()).map(([userId, threadMessages]) =>
+      mapSupportThread(workspace, userId, threadMessages)
+    );
+  });
+
+  threads.sort((left, right) => {
+    const leftTime = left.lastMessageAt ? new Date(left.lastMessageAt).getTime() : 0;
+    const rightTime = right.lastMessageAt ? new Date(right.lastMessageAt).getTime() : 0;
+    return rightTime - leftTime;
+  });
+  res.json({ threads });
+});
+
+app.post("/api/support/messages", authRequired, (req: AuthedRequest, res) => {
+  const requesterId = req.userId as string;
+  const requester = getUserById(requesterId);
+  const workspaceId = typeof req.body?.workspaceId === "string" ? req.body.workspaceId : "";
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  const owner = isAppOwner(requesterId);
+  const targetUserId = owner && typeof req.body?.threadUserId === "string" ? req.body.threadUserId : requesterId;
+
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ error: "message required" });
+    return;
+  }
+  if (!owner && !hasMembership(requesterId, workspaceId)) {
+    res.status(403).json({ error: "workspace access required" });
+    return;
+  }
+  if (owner && !targetUserId) {
+    res.status(400).json({ error: "threadUserId required" });
+    return;
+  }
+
+  const workspace = getWorkspace(workspaceId);
+  const targetUser = getUserById(targetUserId);
+  const message: SupportMessageRecord = {
+    id: `support-${crypto.randomUUID()}`,
+    workspaceId,
+    userId: targetUserId,
+    userEmail: targetUser?.email ?? requester?.email ?? "unknown",
+    userName: targetUser?.name ?? requester?.name,
+    text,
+    fromOwner: owner,
+    createdAt: new Date().toISOString()
+  };
+  saveSupportMessages(workspaceId, [...getSupportMessages(workspace), message]);
+  io.emit("support:message", { workspaceId, userId: targetUserId, message });
+  res.json({ message });
+});
+
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!err) {
     next();
@@ -9477,10 +11313,74 @@ io.on("connection", (socket) => {
   });
 });
 
+function runScheduledBrainSync(kind: "hourly" | "daily") {
+  for (const workspace of getAllWorkspaces()) {
+    try {
+      const context = buildBrainRunContext(workspace.id);
+      const orchestrator = getQouterXBrainOrchestrator();
+      if (kind === "daily") {
+        orchestrator.run({
+          workspaceId: workspace.id,
+          mode: "module-specific",
+          modules: ["materials", "purchasing"],
+          jobs: context.queueSnapshot.jobs,
+          quotes: context.ws.quotes,
+          stockSnapshot: context.stockSnapshot,
+          services: context.services,
+          nestingParts: context.nestingParts
+        });
+      } else {
+        orchestrator.run({
+          workspaceId: workspace.id,
+          mode: "quick",
+          jobs: context.queueSnapshot.jobs,
+          quotes: context.ws.quotes,
+          stockSnapshot: context.stockSnapshot,
+          services: context.services,
+          nestingParts: context.nestingParts
+        });
+      }
+    } catch (error) {
+      console.error(`[brain-orchestrator] ${kind} sync failed for workspace ${workspace.id}:`, error instanceof Error ? error.message : error);
+    }
+  }
+}
+
+function setupBrainSchedulers() {
+  if (eventBrainSchedulerSingleton) return;
+  eventBrainSchedulerSingleton = new BrainScheduler();
+  eventBrainSchedulerSingleton.schedule("process-pending-events", 60 * 1000, async () => {
+    await getEventBrainOrchestrator().processPendingEvents(50);
+  });
+  eventBrainSchedulerSingleton.schedule("cloud-sync-events", 5 * 60 * 1000, async () => {
+    if (!getCloudSyncDb().getSettings().enabled) return;
+    for (const workspace of getAllWorkspaces()) {
+      recordBrainEvent({
+        workspaceId: workspace.id,
+        eventType: "subscription_updated",
+        entityType: "workspace",
+        entityId: workspace.id,
+        payload: { scheduler: "cloud-sync-events" }
+      });
+    }
+  });
+  eventBrainSchedulerSingleton.schedule("hourly-queue-lead-time", 60 * 60 * 1000, async () => {
+    runScheduledBrainSync("hourly");
+  });
+  eventBrainSchedulerSingleton.schedule("daily-material-purchasing", 24 * 60 * 60 * 1000, async () => {
+    runScheduledBrainSync("daily");
+  });
+}
+
 backfillStartLinks();
 setupFileActivityWatcher();
+setupBrainSchedulers();
 
 server.on("error", (error) => {
+  if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+    console.error(`API port ${PORT} is already in use. Another Qouter X API process is already running; not starting a duplicate server.`);
+    process.exit(0);
+  }
   console.error("HTTP server error:", error);
 });
 

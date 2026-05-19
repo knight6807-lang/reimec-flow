@@ -46,6 +46,72 @@ let updateStatus = {
   message: null
 };
 
+function pathExists(targetPath) {
+  try {
+    return Boolean(targetPath) && fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+}
+
+function detectOneDriveRoot() {
+  const envCandidates = [
+    process.env.ONE_DRIVE_ROOT,
+    process.env.OneDrive,
+    process.env.OneDriveCommercial,
+    process.env.OneDriveConsumer
+  ].filter(Boolean);
+  for (const candidate of envCandidates) {
+    if (pathExists(candidate)) return candidate;
+  }
+
+  const home = app.getPath("home");
+  const directCandidates = [
+    path.join(home, "OneDrive"),
+    path.join(home, "OneDrive - Personal")
+  ];
+  for (const candidate of directCandidates) {
+    if (pathExists(candidate)) return candidate;
+  }
+
+  const cloudStorage = path.join(home, "Library", "CloudStorage");
+  if (pathExists(cloudStorage)) {
+    const entries = fs.readdirSync(cloudStorage);
+    const oneDrive = entries.find((entry) => entry.toLowerCase().startsWith("onedrive"));
+    if (oneDrive) return path.join(cloudStorage, oneDrive);
+  }
+
+  return null;
+}
+
+function sanitizeFileName(fileName) {
+  return String(fileName || "qouterx-export.dxf")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim() || "qouterx-export.dxf";
+}
+
+function ensureUniqueFilePath(filePath) {
+  if (!pathExists(filePath)) return filePath;
+  const dir = path.dirname(filePath);
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  let count = 2;
+  while (true) {
+    const candidate = path.join(dir, `${base} (${count})${ext}`);
+    if (!pathExists(candidate)) return candidate;
+    count += 1;
+  }
+}
+
+function writeDxfExport(filePath, textContent, base64Content) {
+  if (textContent) {
+    fs.writeFileSync(filePath, textContent, "utf8");
+  } else {
+    fs.writeFileSync(filePath, Buffer.from(base64Content, "base64"));
+  }
+}
+
 function getUpdaterConfigPath() {
   if (!app.isPackaged) return null;
   return path.join(process.resourcesPath, "app-update.yml");
@@ -774,17 +840,64 @@ ipcMain.handle("desktop:pick-dxf", async () => {
   }
 });
 
+ipcMain.handle("desktop:pick-file", async (_event, input) => {
+  try {
+    const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
+    const extensions = Array.isArray(input?.extensions)
+      ? input.extensions.map((value) => String(value).replace(/^\./, "").trim()).filter(Boolean)
+      : ["dxf", "pdf"];
+    const title = typeof input?.title === "string" && input.title.trim() ? input.title.trim() : "Select file";
+    const result = await dialog.showOpenDialog(win ?? undefined, {
+      title,
+      properties: ["openFile"],
+      filters: [
+        { name: extensions.map((extension) => extension.toUpperCase()).join(" / "), extensions },
+        { name: "All Files", extensions: ["*"] }
+      ]
+    });
+    if (result.canceled || !result.filePaths.length) {
+      return { ok: false, canceled: true };
+    }
+    const filePath = result.filePaths[0];
+    return {
+      ok: true,
+      canceled: false,
+      fileName: path.basename(filePath),
+      filePath,
+      contentBase64: fs.readFileSync(filePath).toString("base64")
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, canceled: false, error: detail };
+  }
+});
+
 ipcMain.handle("desktop:save-dxf", async (_event, input) => {
   try {
     const win = mainWindow ?? BrowserWindow.getAllWindows()[0];
     const defaultFileName =
       typeof input?.defaultFileName === "string" && input.defaultFileName.trim()
-        ? input.defaultFileName.trim()
+        ? sanitizeFileName(input.defaultFileName.trim())
         : "qouterx-export.dxf";
     const textContent = typeof input?.contentText === "string" ? input.contentText : "";
     const base64Content = typeof input?.contentBase64 === "string" ? input.contentBase64 : "";
     if (!textContent && !base64Content) {
       return { ok: false, canceled: false, error: "DXF content is empty." };
+    }
+    const oneDriveRoot = detectOneDriveRoot();
+    if (oneDriveRoot) {
+      const exportFolder = path.join(oneDriveRoot, "Qouter X", "DXF Exports");
+      fs.mkdirSync(exportFolder, { recursive: true });
+      const filePath = ensureUniqueFilePath(path.join(exportFolder, defaultFileName));
+      writeDxfExport(filePath, textContent, base64Content);
+      return {
+        ok: true,
+        canceled: false,
+        filePath,
+        folderPath: exportFolder,
+        oneDriveRoot,
+        autoSavedToOneDrive: true
+      };
     }
     const result = await dialog.showSaveDialog(win ?? undefined, {
       title: "Export DXF",
@@ -797,11 +910,7 @@ ipcMain.handle("desktop:save-dxf", async (_event, input) => {
     if (result.canceled || !result.filePath) {
       return { ok: false, canceled: true };
     }
-    if (textContent) {
-      fs.writeFileSync(result.filePath, textContent, "utf8");
-    } else {
-      fs.writeFileSync(result.filePath, Buffer.from(base64Content, "base64"));
-    }
+    writeDxfExport(result.filePath, textContent, base64Content);
     return { ok: true, canceled: false, filePath: result.filePath };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -939,6 +1048,19 @@ ipcMain.handle("desktop:open-external", async (_event, url) => {
   try {
     await shell.openExternal(url.trim());
     return { ok: true };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: detail };
+  }
+});
+
+ipcMain.handle("desktop:open-path", async (_event, targetPath) => {
+  if (typeof targetPath !== "string" || !targetPath.trim()) {
+    return { ok: false, error: "path required" };
+  }
+  try {
+    const error = await shell.openPath(targetPath.trim());
+    return error ? { ok: false, error } : { ok: true };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     return { ok: false, error: detail };

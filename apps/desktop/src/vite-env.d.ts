@@ -5,8 +5,17 @@ type DesktopPickDxfResult =
   | { ok: false; canceled: true }
   | { ok: false; canceled: false; error?: string };
 
+type DesktopPickFileResult = DesktopPickDxfResult;
+
 type DesktopSaveDxfResult =
-  | { ok: true; canceled: false; filePath: string }
+  | {
+      ok: true;
+      canceled: false;
+      filePath: string;
+      folderPath?: string;
+      oneDriveRoot?: string;
+      autoSavedToOneDrive?: boolean;
+    }
   | { ok: false; canceled: true }
   | { ok: false; canceled: false; error?: string };
 
@@ -44,6 +53,7 @@ type DesktopApiStatusPayload = {
 interface Window {
   desktopShell?: {
     pickDxfFile: () => Promise<DesktopPickDxfResult>;
+    pickFile: (input: { title?: string; extensions?: string[] }) => Promise<DesktopPickFileResult>;
     saveDxfFile: (input: { defaultFileName: string; contentBase64?: string; contentText?: string }) => Promise<DesktopSaveDxfResult>;
     getAppVersion: () => Promise<{
       ok: boolean;
@@ -66,6 +76,7 @@ interface Window {
     installUpdate: () => Promise<{ ok: boolean; error?: string }>;
     installUpdateNow: () => Promise<{ ok: boolean; error?: string }>;
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
+    openPath: (targetPath: string) => Promise<{ ok: boolean; error?: string }>;
     getApiConfig: () => Promise<{
       ok: boolean;
       gatewayApiUrl?: string | null;

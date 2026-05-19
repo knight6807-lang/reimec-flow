@@ -277,6 +277,7 @@ app.use(express.json({ limit: "25mb" }));
 
 type AuthedRequest = express.Request & { userId?: string };
 type EmailSettingsRecord = NonNullable<WorkspaceRecord["emailSettings"]>;
+type SupportMessageRecord = NonNullable<WorkspaceRecord["supportMessages"]>[number];
 const APP_ACCESS_FEATURES = [
   "chat",
   "jobs",
@@ -1336,6 +1337,32 @@ function detectOneDriveRoot() {
     if (oneDrive) return path.join(cloudStorage, oneDrive);
   }
   return localCandidate;
+}
+
+function getSupportMessages(ws: WorkspaceRecord) {
+  return ws.supportMessages ?? [];
+}
+
+function saveSupportMessages(workspaceId: string, messages: SupportMessageRecord[]) {
+  const ws = getWorkspace(workspaceId);
+  upsertWorkspace({ ...ws, supportMessages: messages });
+}
+
+function mapSupportThread(workspace: WorkspaceRecord, userId: string, messages: SupportMessageRecord[]) {
+  const user = getUserById(userId);
+  const sorted = messages.slice().sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+  const last = sorted[sorted.length - 1];
+  return {
+    threadKey: `${workspace.id}:${userId}`,
+    workspaceId: workspace.id,
+    workspaceName: workspace.name,
+    userId,
+    userEmail: user?.email ?? sorted[0]?.userEmail ?? "unknown",
+    userName: user?.name ?? sorted[0]?.userName,
+    lastMessageAt: last?.createdAt ?? null,
+    unreadCount: sorted.filter((message) => !message.fromOwner).length,
+    messages: sorted
+  };
 }
 
 function getJobnestRoot() {
@@ -7594,6 +7621,85 @@ app.post("/api/billing/manual-payment", authRequired, (req: AuthedRequest, res) 
     currentPeriodEnd: getEffectiveBillingPeriodEnd(ws),
     hasAccess: workspaceHasBillingAccess(ws, req.userId)
   });
+});
+
+app.get("/api/support/threads", authRequired, (req: AuthedRequest, res) => {
+  const requestedWorkspaceId = typeof req.query.workspaceId === "string" ? req.query.workspaceId : "";
+  const requesterId = req.userId as string;
+  const owner = isAppOwner(requesterId);
+
+  if (!owner && !requestedWorkspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!owner && !hasMembership(requesterId, requestedWorkspaceId)) {
+    res.status(403).json({ error: "workspace access required" });
+    return;
+  }
+
+  const workspaces = owner ? getAllWorkspaces() : [getWorkspace(requestedWorkspaceId)];
+  const threads = workspaces.flatMap((workspace) => {
+    const messages = getSupportMessages(workspace).filter((message) =>
+      owner ? true : message.userId === requesterId
+    );
+    const grouped = new Map<string, SupportMessageRecord[]>();
+    for (const message of messages) {
+      if (!grouped.has(message.userId)) grouped.set(message.userId, []);
+      grouped.get(message.userId)!.push(message);
+    }
+    return Array.from(grouped.entries()).map(([userId, threadMessages]) =>
+      mapSupportThread(workspace, userId, threadMessages)
+    );
+  });
+
+  threads.sort((left, right) => {
+    const leftTime = left.lastMessageAt ? new Date(left.lastMessageAt).getTime() : 0;
+    const rightTime = right.lastMessageAt ? new Date(right.lastMessageAt).getTime() : 0;
+    return rightTime - leftTime;
+  });
+  res.json({ threads });
+});
+
+app.post("/api/support/messages", authRequired, (req: AuthedRequest, res) => {
+  const requesterId = req.userId as string;
+  const requester = getUserById(requesterId);
+  const workspaceId = typeof req.body?.workspaceId === "string" ? req.body.workspaceId : "";
+  const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+  const owner = isAppOwner(requesterId);
+  const targetUserId = owner && typeof req.body?.threadUserId === "string" ? req.body.threadUserId : requesterId;
+
+  if (!workspaceId) {
+    res.status(400).json({ error: "workspaceId required" });
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ error: "message required" });
+    return;
+  }
+  if (!owner && !hasMembership(requesterId, workspaceId)) {
+    res.status(403).json({ error: "workspace access required" });
+    return;
+  }
+  if (owner && !targetUserId) {
+    res.status(400).json({ error: "threadUserId required" });
+    return;
+  }
+
+  const workspace = getWorkspace(workspaceId);
+  const targetUser = getUserById(targetUserId);
+  const message: SupportMessageRecord = {
+    id: `support-${crypto.randomUUID()}`,
+    workspaceId,
+    userId: targetUserId,
+    userEmail: targetUser?.email ?? requester?.email ?? "unknown",
+    userName: targetUser?.name ?? requester?.name,
+    text,
+    fromOwner: owner,
+    createdAt: new Date().toISOString()
+  };
+  saveSupportMessages(workspaceId, [...getSupportMessages(workspace), message]);
+  io.emit("support:message", { workspaceId, userId: targetUserId, message });
+  res.json({ message });
 });
 
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {

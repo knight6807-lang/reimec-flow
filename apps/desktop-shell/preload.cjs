@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("desktopShell", {
   pickDxfFile: () => ipcRenderer.invoke("desktop:pick-dxf"),
+  pickFile: (input) => ipcRenderer.invoke("desktop:pick-file", input),
   saveDxfFile: (input) => ipcRenderer.invoke("desktop:save-dxf", input),
   getAppVersion: () => ipcRenderer.invoke("desktop:get-app-version"),
   getApiBaseUrl: () => ipcRenderer.invoke("desktop:get-api-base-url"),
@@ -11,6 +12,7 @@ contextBridge.exposeInMainWorld("desktopShell", {
   installUpdate: () => ipcRenderer.invoke("desktop:install-update"),
   installUpdateNow: () => ipcRenderer.invoke("desktop:install-update"),
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
+  openPath: (targetPath) => ipcRenderer.invoke("desktop:open-path", targetPath),
   getApiConfig: () => ipcRenderer.invoke("desktop:get-api-config"),
   setApiConfig: (config) => ipcRenderer.invoke("desktop:set-api-config", config),
   secureStoreGet: (key) => ipcRenderer.invoke("desktop:secure-store-get", key),

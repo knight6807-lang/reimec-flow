@@ -4,6 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { openBrainCoreDatabase } from "./brain-core.js";
+import { BrainOrchestrator } from "./brain/core/BrainOrchestrator.js";
+import type { BrainModule } from "./brain/core/types.js";
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "qouterx-brain-core-"));
@@ -57,4 +59,39 @@ test("updates recommendation status", () => {
   assert.ok(created);
   const updated = brain.recommendationService.updateRecommendation(created!.id, "accepted");
   assert.equal(updated?.status, "accepted");
+});
+
+test("processes persisted outbox events through matching brain modules", async () => {
+  const root = makeTempRoot();
+  const brain = openBrainCoreDatabase(root);
+  let handled = 0;
+  const module: BrainModule = {
+    name: "test_module",
+    supportedEvents: ["dxf_imported"],
+    async handleEvent(event) {
+      handled += 1;
+      assert.equal(event.eventType, "dxf_imported");
+      assert.equal(event.entityId, "file-1");
+      return {
+        eventsCreated: [],
+        recommendationsCreated: [],
+        warnings: [],
+        metrics: { handled }
+      };
+    }
+  };
+  const orchestrator = new BrainOrchestrator(brain.eventBus, [module], brain.cache, brain.taskService);
+
+  brain.eventService.recordEvent({
+    eventType: "dxf_imported",
+    entityType: "dxf",
+    entityId: "file-1",
+    payload: { workspaceId: "ws-1" }
+  });
+
+  assert.equal(brain.eventBus.stats().pending, 1);
+  const result = await orchestrator.processPendingEvents();
+  assert.equal(result.completed, 1);
+  assert.equal(handled, 1);
+  assert.equal(brain.eventBus.stats().completed, 1);
 });

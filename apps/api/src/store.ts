@@ -57,12 +57,24 @@ export type WorkspaceRecord = {
   files: FileRecord[];
   ledger: LedgerEntry[];
   syncState: SyncState;
+  supportMessages?: SupportMessageRecord[];
   stripeCustomerId?: string;
   stripeSubscriptionId?: string;
   subscriptionStatus?: string;
   currentPeriodEnd?: number | null;
   manualBillingPaidUntil?: number | null;
   lastBillingPaymentAt?: string;
+};
+
+export type SupportMessageRecord = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  text: string;
+  fromOwner: boolean;
+  createdAt: string;
 };
 
 export type UserRecord = {
@@ -374,7 +386,8 @@ function ensureWorkspaceDefaults(workspace: WorkspaceRecord): WorkspaceRecord {
     workers: workspace.workers ?? [],
     files: workspace.files ?? [],
     ledger: workspace.ledger ?? [],
-    syncState: workspace.syncState ?? {}
+    syncState: workspace.syncState ?? {},
+    supportMessages: workspace.supportMessages ?? []
   };
 }
 

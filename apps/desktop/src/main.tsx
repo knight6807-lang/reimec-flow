@@ -7,6 +7,29 @@ import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 type ChatMsg = { roomId: string; text: string; user: string };
 
+type SupportMessage = {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  text: string;
+  fromOwner: boolean;
+  createdAt: string;
+};
+
+type SupportThread = {
+  threadKey: string;
+  workspaceId: string;
+  workspaceName: string;
+  userId: string;
+  userEmail: string;
+  userName?: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
+  messages: SupportMessage[];
+};
+
 type BillingStatus = {
   status: string | null;
   currentPeriodEnd: number | null;
@@ -806,7 +829,10 @@ type BrainEventRecord = {
     | "material_reserved"
     | "material_used"
     | "offcut_created"
+    | "offcut_recommended"
+    | "offcut_selected"
     | "nesting_completed"
+    | "nesting_heat_warning"
     | "purchase_order_detected"
     | "payment_received"
     | "error_detected";
@@ -827,6 +853,51 @@ type BrainRecommendationRecord = {
   status: "open" | "accepted" | "dismissed";
   payloadJson: string;
   createdAt: string;
+};
+
+type BrainDashboardRecord = {
+  topRecommendations: BrainRecommendationRecord[];
+  recentEvents: BrainEventRecord[];
+  profitSummary: {
+    profitToday: number;
+    profitMonth: number;
+    bestCustomers: Array<{ customerId: string; revenue: number; grossProfit: number; marginPercent: number; jobCount: number }>;
+    worstCustomers: Array<{ customerId: string; revenue: number; grossProfit: number; marginPercent: number; jobCount: number }>;
+    underpricedJobs: Array<{ id: number; jobId?: string | null; customerId?: string | null; grossProfit: number; marginPercent: number; material: string; thickness?: number | null }>;
+    recommendedPriceIncreases: Array<{ id: number; title: string; message: string; confidence: number; createdAt: string }>;
+  };
+  profitWarnings: Array<{ id: number; jobId?: string | null; customerId?: string | null; grossProfit: number; marginPercent: number; material: string; thickness?: number | null }>;
+  profitInsights: Array<{ id: number; insightType: string; title: string; message: string; confidence: number; createdAt: string }>;
+  materialForecasts: Array<{ id: number; material: string; thickness: number; forecastPeriodDays: number; predictedSheetsNeeded: number; predictedKgNeeded: number; confidence: number }>;
+  materialShortages: Array<{ material: string; thickness: number; forecastPeriodDays: number; predictedSheetsNeeded: number; availableEquivalentSheets: number; shortageSheets: number; recommendedBuySheets: number; confidence: number }>;
+  purchaseRecommendations: Array<{ id: number; material: string; thickness: number; recommendedQuantity: number; unit: string; urgency: "low" | "normal" | "urgent"; estimatedCost: number; reason: string; preferredSupplier?: string | null }>;
+  offcutOpportunities: Array<{
+    recommendation: BrainRecommendationRecord;
+    offcut?: { id: number; material: string; thickness: number; width: number; height: number; location?: string | null } | null;
+    latestMatch?: { fitType: "normal" | "rotated" | "partial"; savingEstimate: number; confidence: number } | null;
+  }>;
+  queuePlan: {
+    id: number;
+    title: string;
+    status: "draft" | "active" | "completed";
+    totalEstimatedMinutes: number;
+    setupSavingMinutes: number;
+    materialSavingEstimate: number;
+    items: Array<{ jobId: number; reason: string }>;
+  } | null;
+  leadTimeRisks: Array<{ id: number; jobId?: number | null; estimatedFinishAt: string; confidence: number; riskWarnings: string[]; reasons: string[] }>;
+  dxfErrors: Array<{ dxfFileId: string; criticalCount: number; warningCount: number; infoCount: number; latestAt: string }>;
+  nestingPlans: Array<{ id: number; material: string; thickness: number; wastePercent: number; estimatedSaving: number; status: "draft" | "approved" | "completed" }>;
+  syncHealth: {
+    cloudSyncEnabled: boolean;
+    pendingSyncEvents: number;
+    failedSyncEvents: number;
+    recentDeviceCount: number;
+    recentErrorCount: number;
+    activeAccounts: number;
+    expiredAccounts: number;
+    pendingPaymentProofs: number;
+  };
 };
 
 type ManufacturingMemoryRecord = {
@@ -892,6 +963,391 @@ type ProfitSummary = {
   recommendedPriceIncreases: ProfitInsight[];
 };
 
+type MaterialUsageForecastRecord = {
+  id: number;
+  workspaceId: string;
+  material: string;
+  thickness: number;
+  forecastPeriodDays: number;
+  predictedSheetsNeeded: number;
+  predictedKgNeeded: number;
+  confidence: number;
+  basedOnJobsCount: number;
+  basedOnQuoteCount: number;
+  createdAt: string;
+};
+
+type MaterialShortageRecord = {
+  material: string;
+  thickness: number;
+  forecastPeriodDays: number;
+  predictedSheetsNeeded: number;
+  predictedKgNeeded: number;
+  availableEquivalentSheets: number;
+  availableSheets: number;
+  minimumSheets: number;
+  shortageSheets: number;
+  confidence: number;
+  leadTimeDays: number;
+  recommendedBuySheets: number;
+  preferredSupplier?: string | null;
+  recommendation: string;
+};
+
+type PurchaseRecommendationRecord = {
+  id: number;
+  workspaceId: string;
+  material: string;
+  thickness: number;
+  recommendedQuantity: number;
+  unit: string;
+  reason: string;
+  urgency: "low" | "normal" | "urgent";
+  estimatedCost: number;
+  preferredSupplier?: string | null;
+  status: "open" | "ordered" | "dismissed";
+  createdAt: string;
+};
+
+type ProductionQueueScoreRecord = {
+  id: number;
+  workspaceId: string;
+  jobId: number;
+  score: number;
+  reasonsJson: string;
+  createdAt: string;
+};
+
+type ProductionQueuePlanItemRecord = {
+  id: number;
+  queuePlanId: number;
+  jobId: number;
+  sortOrder: number;
+  reason: string;
+  createdAt: string;
+};
+
+type ProductionQueuePlanRecord = {
+  id: number;
+  workspaceId: string;
+  title: string;
+  status: "draft" | "active" | "completed";
+  totalEstimatedMinutes: number;
+  setupSavingMinutes: number;
+  materialSavingEstimate: number;
+  createdAt: string;
+  items: ProductionQueuePlanItemRecord[];
+};
+
+type LeadTimePredictionRecord = {
+  id: number;
+  workspaceId: string;
+  jobId?: number | null;
+  quoteId?: string | null;
+  estimatedStartAt: string;
+  estimatedFinishAt: string;
+  confidence: number;
+  reasonsJson: string;
+  createdAt: string;
+  reasons: string[];
+  riskWarnings: string[];
+  queueLoadMinutes: number;
+  stockDelayDays: number;
+  adjustedCutTimeMinutes: number;
+  setupMinutes: number;
+  operatorCapacityMinutesPerDay: number;
+  similarHistorySamples: number;
+};
+
+type SheetOptimizationResultRecord = {
+  id: number;
+  workspaceId: string;
+  jobId?: string | null;
+  quoteId?: string | null;
+  material: string;
+  thickness: number;
+  requiredWidth: number;
+  requiredHeight: number;
+  recommendedSourceType: "offcut" | "sheet" | "order_required";
+  sourceId?: number | null;
+  wastePercent: number;
+  savingEstimate: number;
+  confidence: number;
+  createdAt: string;
+  recommendation: string;
+  sourceLabel: string;
+  fitType: "normal" | "rotated" | "none";
+  betterSheetWarning?: string | null;
+  stockMessage: string;
+};
+
+type NestingPlanItemRecord = {
+  id: number;
+  nestingPlanId: number;
+  jobId?: number | null;
+  quoteId?: string | null;
+  partDnaId?: number | null;
+  quantity: number;
+  x: number;
+  y: number;
+  rotation: number;
+  createdAt: string;
+};
+
+type NestingPlanRecord = {
+  id: number;
+  workspaceId: string;
+  material: string;
+  thickness: number;
+  sheetSourceType: "sheet" | "offcut";
+  sheetSourceId?: number | null;
+  width: number;
+  height: number;
+  wastePercent: number;
+  estimatedCutTimeMinutes: number;
+  estimatedSaving: number;
+  status: "draft" | "approved" | "completed";
+  createdAt: string;
+  items: NestingPlanItemRecord[];
+};
+
+type NestingSkippedGroupRecord = {
+  material: string;
+  thickness: number;
+  reason: string;
+  jobIds: number[];
+};
+
+type AdvancedNestingPlanRecord = {
+  jobId?: number;
+  status: "draft" | "optimized" | "approved" | "exported";
+  material: string;
+  thickness: number;
+  sheetWidth: number;
+  sheetHeight: number;
+  kerf: number;
+  border: number;
+  spacing: number;
+  placements: Array<{ id: string; nestingItemId: number; x: number; y: number; width: number; height: number; rotation: number; isCommonLine: boolean }>;
+  wastePercent: number;
+  usagePercent: number;
+  estimatedCutLength: number;
+  estimatedPierceCount: number;
+  estimatedCutTimeMinutes: number;
+  commonLineSavingEstimate: number;
+  heatScore?: number;
+  heatZones?: Array<{ x: number; y: number; width: number; height: number; score: number; pierces: number }>;
+  microJoins: Array<{ placementId: string; x: number; y: number; tabWidth: number; reason: string }>;
+  warnings: Array<{ severity: "info" | "warning" | "critical"; message: string; payload?: Record<string, unknown> }>;
+  dxfExportPath?: string | null;
+};
+
+type NestingStudioResult = {
+  placements: Array<{
+    partId: string;
+    name: string;
+    x: number;
+    y: number;
+    rotation: number;
+    cutOrder?: number;
+    polygon: Array<{ x: number; y: number }>;
+    microJoins: Array<{ x: number; y: number }>;
+    leadIn: { start: { x: number; y: number }; end: { x: number; y: number } };
+  }>;
+  unplaced: Array<{ id: string; name: string; quantity: number }>;
+  usagePercent: number;
+  wastePercent: number;
+  commonLineSaving: number;
+  cutOrder?: Array<{ cutOrder: number; placementId: string; partId?: string; operation: "hole" | "outer"; x: number; y: number }>;
+  heatScore?: number;
+  heatZones?: Array<{ x: number; y: number; width: number; height: number; score: number; pierces: number }>;
+  nfpDebug?: {
+    boundaries: Array<Array<{ x: number; y: number }>>;
+    collisionZones: Array<Array<{ x: number; y: number }>>;
+    validPoints: Array<{ x: number; y: number }>;
+  };
+  optimizationProgress?: { attemptsCompleted: number; bestWastePercent: number; bestUsagePercent: number; placedPartsCount: number; timeLimitMs: number; returnedBestSoFar: boolean };
+  warnings: string[];
+  dxf: string;
+};
+
+type NestingWorkspacePartRecord = {
+  id: number;
+  workspaceId: number;
+  dxfFileId?: string | null;
+  jobId?: string | null;
+  quoteId?: string | null;
+  partDnaId?: number | null;
+  fileName: string;
+  quantity: number;
+  width: number;
+  height: number;
+  cutLength: number;
+  pierceCount: number;
+  geometryJson: string;
+  previewGeometry?: NestingPreviewGeometry | null;
+  createdAt: string;
+};
+
+type NestingPreviewGeometry = {
+  outerContours?: Array<Array<{ x: number; y: number }>>;
+  innerHoles?: Array<Array<{ x: number; y: number }>>;
+  circles?: Array<{ cx: number; cy: number; r: number }>;
+  arcs?: Array<{ cx: number; cy: number; r: number; startAngle: number; endAngle: number }>;
+  outerContour?: Array<{ x: number; y: number }>;
+  holes?: Array<Array<{ x: number; y: number }>>;
+  simplifiedPolygon?: Array<{ x: number; y: number }>;
+  preview?: Array<{ x: number; y: number }>;
+  segments?: Array<{ x1: number; y1: number; x2: number; y2: number; kind?: "line" | "arc" | "circle" }>;
+};
+
+type NestingWorkspacePlacementRecord = {
+  id: number;
+  workspaceId: number;
+  partId: number;
+  fileName?: string | null;
+  previewGeometry?: NestingPreviewGeometry;
+  sheetIndex: number;
+  x: number;
+  y: number;
+  rotation: number;
+  mirrored: boolean;
+  isManual: boolean;
+  hasCollision: boolean;
+  isOutsideSheet: boolean;
+  createdAt: string;
+};
+
+type NestingWorkspaceRecord = {
+  id: number;
+  workspaceId?: string | null;
+  customerId?: string | null;
+  customerName: string;
+  nestName: string;
+  material: string;
+  thickness: number;
+  sourceType: "sheet" | "offcut";
+  sourceId?: number | null;
+  sheetWidth: number;
+  sheetHeight: number;
+  border: number;
+  kerf: number;
+  spacing: number;
+  allowRotation: boolean;
+  allowCommonLine: boolean;
+  enableMicroJoins: boolean;
+  leadInType: "line" | "arc";
+  leadInLength: number;
+  status: "draft" | "nested" | "exported" | "completed";
+  wastePercent?: number | null;
+  usagePercent?: number | null;
+  estimatedCutLength?: number | null;
+  estimatedPierceCount?: number | null;
+  exportedDxfPath?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  parts: NestingWorkspacePartRecord[];
+  placements: NestingWorkspacePlacementRecord[];
+  warnings: Array<{ severity: "info" | "warning" | "critical"; message: string; payload?: Record<string, unknown> }>;
+};
+
+type NestingOffcutRecord = {
+  id: number;
+  sourceWorkspaceId?: number | null;
+  sourceJobId?: string | null;
+  sourceCustomerId?: string | null;
+  material: string;
+  thickness: number;
+  width: number;
+  height: number;
+  shapeJson?: string | null;
+  previewJson?: string | null;
+  usableArea: number;
+  location?: string | null;
+  status: "available" | "reserved" | "used" | "scrapped";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type NestingOffcutRecommendation = {
+  source: "nesting" | "stock" | "sheet" | "order";
+  offcutId: number | null;
+  material: string;
+  thickness: number;
+  width: number;
+  height: number;
+  fitsNormal: boolean;
+  fitsRotated: boolean;
+  wastePercent: number;
+  estimatedSaving: number;
+  message: string;
+  previewJson?: string | null;
+};
+
+type NestingStudioOffcutRecommendation = {
+  offcut: NestingOffcutRecord;
+  rotatedFit: boolean;
+  wastePercent: number;
+  estimatedSaving: number;
+};
+
+type NestingStudioExportRecord = {
+  exportPath: string;
+  exportFolder: string;
+  exportFileName: string;
+};
+
+type DxfErrorReportRecord = {
+  id: number;
+  workspaceId: string;
+  dxfFileId: string;
+  partDnaId?: number | null;
+  severity: "info" | "warning" | "critical";
+  errorType: string;
+  message: string;
+  entityRef?: string | null;
+  payloadJson: string;
+  createdAt: string;
+};
+
+type DxfErrorCheckResult = {
+  dxfFileId: string;
+  partDnaId?: number | null;
+  reports: DxfErrorReportRecord[];
+  summary: {
+    criticalCount: number;
+    warningCount: number;
+    infoCount: number;
+  };
+  recommendedFixes: string[];
+};
+
+type ProductionAssistantAction = {
+  id: string;
+  label: string;
+  actionType:
+    | "open_ai_queue"
+    | "open_material_prediction"
+    | "open_profit_intelligence"
+    | "open_dxf_errors"
+    | "open_stock"
+    | "open_part_dna"
+    | "open_quotes"
+    | "refresh";
+  payload?: Record<string, unknown>;
+};
+
+type ProductionAssistantResponse = {
+  answer: string;
+  sourceModules: string[];
+  recommendations: Array<{
+    title: string;
+    message: string;
+    confidence?: number;
+  }>;
+  suggestedActions: ProductionAssistantAction[];
+};
+
 type AiChatMessage = {
   role: "user" | "assistant";
   text: string;
@@ -914,6 +1370,15 @@ type AppFeatureId =
   | "brain_center"
   | "manufacturing_memory"
   | "profit_intelligence"
+  | "material_prediction"
+  | "ai_production_queue"
+  | "lead_time_intelligence"
+  | "sheet_optimizer"
+  | "nesting_intelligence"
+  | "nesting_workspace"
+  | "nesting_studio"
+  | "dxf_error_detection"
+  | "production_assistant"
   | "files"
   | "qr";
 
@@ -991,6 +1456,14 @@ function deriveAccountRef(email: string) {
 const DEVICE_ID_KEY = "reimecDeviceId";
 const EMAIL_PROCESSED_KEY_PREFIX = "emailProcessedByWorkspace";
 const EMAIL_READ_KEY_PREFIX = "emailReadByWorkspace";
+const GMAIL_EMAIL_PRESET = {
+  smtpHost: "smtp.gmail.com",
+  smtpPort: 465,
+  smtpSecure: true,
+  imapHost: "imap.gmail.com",
+  imapPort: 993,
+  imapSecure: true
+};
 const ZAR_FORMATTER = new Intl.NumberFormat("en-ZA", {
   style: "currency",
   currency: "ZAR",
@@ -1009,6 +1482,16 @@ const APP_FEATURE_OPTIONS: Array<{ id: AppFeatureId; label: string }> = [
   { id: "customers", label: "Customers" },
   { id: "image_dxf", label: "Image DXF" },
   { id: "ai_assistant", label: "Smart Job Queue" },
+  { id: "brain_center", label: "Brain Center" },
+  { id: "manufacturing_memory", label: "Manufacturing Memory" },
+  { id: "profit_intelligence", label: "Profit Intelligence" },
+  { id: "material_prediction", label: "Material Prediction" },
+  { id: "ai_production_queue", label: "AI Production Queue" },
+  { id: "lead_time_intelligence", label: "Lead Time Intelligence" },
+  { id: "sheet_optimizer", label: "Sheet Optimizer" },
+  { id: "nesting_workspace", label: "Nesting" },
+  { id: "dxf_error_detection", label: "DXF Error Detection" },
+  { id: "production_assistant", label: "Production Assistant" },
   { id: "files", label: "Files" },
   { id: "qr", label: "QR Station" }
 ];
@@ -1512,6 +1995,385 @@ function createSegmentSvgDataUrl(segments: DxfSegment[], size = 700, background 
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+function createNestingPartPreviewDataUrl(part: NestingWorkspacePartRecord) {
+  try {
+    const geometry = JSON.parse(part.geometryJson || "{}") as { preview?: Array<{ x: number; y: number }> };
+    const points = geometry.preview?.length
+      ? geometry.preview
+      : [
+          { x: 0, y: 0 },
+          { x: part.width, y: 0 },
+          { x: part.width, y: part.height },
+          { x: 0, y: part.height }
+        ];
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const width = Math.max(1, maxX - minX);
+    const height = Math.max(1, maxY - minY);
+    const pad = Math.max(width, height) * 0.08;
+    const viewBox = `${(minX - pad).toFixed(2)} ${(minY - pad).toFixed(2)} ${(width + pad * 2).toFixed(2)} ${(height + pad * 2).toFixed(2)}`;
+    const polyline = points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="110" viewBox="${viewBox}"><rect x="${(minX - pad).toFixed(2)}" y="${(minY - pad).toFixed(2)}" width="${(width + pad * 2).toFixed(2)}" height="${(height + pad * 2).toFixed(2)}" fill="#020617"/><polygon points="${polyline}" fill="rgba(96,165,250,0.18)" stroke="#93c5fd" stroke-width="${Math.max(0.4, Math.max(width, height) / 180).toFixed(2)}"/></svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseNestingPreviewGeometry(part?: NestingWorkspacePartRecord | null): NestingPreviewGeometry | null {
+  if (!part?.geometryJson) return null;
+  try {
+    const parsed = JSON.parse(part.geometryJson) as NestingPreviewGeometry & { previewGeometry?: NestingPreviewGeometry };
+    return {
+      ...(parsed.previewGeometry ?? {}),
+      ...(part?.previewGeometry ?? {}),
+      segments: parsed.segments ?? parsed.previewGeometry?.segments ?? part?.previewGeometry?.segments ?? [],
+      outerContour: parsed.outerContour,
+      simplifiedPolygon: parsed.simplifiedPolygon,
+      preview: parsed.preview,
+      holes: parsed.holes
+    };
+  } catch {
+    return part?.previewGeometry ?? null;
+  }
+}
+
+function rotateNestingPreviewPoint(point: { x: number; y: number }, rotation: number) {
+  const radians = (rotation * Math.PI) / 180;
+  return {
+    x: point.x * Math.cos(radians) - point.y * Math.sin(radians),
+    y: point.x * Math.sin(radians) + point.y * Math.cos(radians)
+  };
+}
+
+function transformNestingPreviewPoint(point: { x: number; y: number }, x: number, y: number, rotation: number, rotatedBounds: { minX: number; minY: number }) {
+  const rotated = rotateNestingPreviewPoint(point, rotation);
+  return { x: rotated.x - rotatedBounds.minX + x, y: rotated.y - rotatedBounds.minY + y };
+}
+
+function arcPreviewPoints(arc: { cx: number; cy: number; r: number; startAngle: number; endAngle: number }, steps = 24) {
+  const start = arc.startAngle;
+  let end = arc.endAngle;
+  while (end < start) end += 360;
+  const sweep = end - start;
+  return Array.from({ length: steps + 1 }, (_, index) => {
+    const angle = ((start + (sweep * index) / steps) * Math.PI) / 180;
+    return { x: arc.cx + Math.cos(angle) * arc.r, y: arc.cy + Math.sin(angle) * arc.r };
+  });
+}
+
+function nestingWorkspaceGeometryPaths(part: NestingWorkspacePartRecord | undefined, placement: NestingWorkspacePlacementRecord) {
+  const geometry = parseNestingPreviewGeometry(part) ?? placement.previewGeometry ?? null;
+  const outerContours = geometry?.outerContours?.length
+    ? geometry.outerContours
+    : geometry?.outerContour?.length
+      ? [geometry.outerContour]
+      : geometry?.simplifiedPolygon?.length
+        ? [geometry.simplifiedPolygon]
+        : geometry?.preview?.length
+          ? [geometry.preview]
+          : [];
+  const holes = geometry?.innerHoles?.length ? geometry.innerHoles : geometry?.holes ?? [];
+  const circles = geometry?.circles ?? [];
+  const arcs = geometry?.arcs ?? [];
+  const arcPoints = arcs.flatMap((arc) => arcPreviewPoints(arc));
+  const segmentPoints = (geometry?.segments ?? []).flatMap((segment) => [{ x: segment.x1, y: segment.y1 }, { x: segment.x2, y: segment.y2 }]);
+  const sourcePoints = [...outerContours.flat(), ...holes.flat(), ...circles.flatMap((circle) => [{ x: circle.cx - circle.r, y: circle.cy - circle.r }, { x: circle.cx + circle.r, y: circle.cy + circle.r }]), ...arcPoints, ...segmentPoints];
+  const rotatedBounds = sourcePoints.length ? nestingStudioBounds(sourcePoints.map((point) => rotateNestingPreviewPoint(point, placement.rotation))) : { minX: 0, minY: 0 };
+  const hasTrueGeometry = Boolean(outerContours.length || holes.length || circles.length || arcs.length || geometry?.segments?.length);
+  const toPath = (points: Array<{ x: number; y: number }>) => {
+    const transformed = points.map((point) => transformNestingPreviewPoint(point, placement.x, placement.y, placement.rotation, rotatedBounds));
+    return transformed.length ? `M ${transformed.map((point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" L ")} Z` : "";
+  };
+  const segmentLines = (geometry?.segments ?? []).map((segment) => {
+    const start = transformNestingPreviewPoint({ x: segment.x1, y: segment.y1 }, placement.x, placement.y, placement.rotation, rotatedBounds);
+    const end = transformNestingPreviewPoint({ x: segment.x2, y: segment.y2 }, placement.x, placement.y, placement.rotation, rotatedBounds);
+    return start && end ? { start, end, kind: segment.kind } : null;
+  }).filter((entry): entry is { start: { x: number; y: number }; end: { x: number; y: number }; kind?: "line" | "arc" | "circle" } => Boolean(entry));
+  const circleShapes = circles.map((circle) => ({
+    center: transformNestingPreviewPoint({ x: circle.cx, y: circle.cy }, placement.x, placement.y, placement.rotation, rotatedBounds),
+    r: circle.r
+  }));
+  const arcPaths = arcs.map((arc) => {
+    const points = arcPreviewPoints(arc).map((point) => transformNestingPreviewPoint(point, placement.x, placement.y, placement.rotation, rotatedBounds));
+    return points.length ? `M ${points.map((point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" L ")}` : "";
+  }).filter(Boolean);
+  return {
+    hasTrueGeometry,
+    outerPath: outerContours.map(toPath).filter(Boolean).join(" "),
+    holePaths: holes.map(toPath).filter(Boolean),
+    segmentLines,
+    circleShapes,
+    arcPaths
+  };
+}
+
+function nestingStudioBounds(points: Array<{ x: number; y: number }>) {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  return {
+    minX: Math.min(...xs),
+    minY: Math.min(...ys),
+    maxX: Math.max(...xs),
+    maxY: Math.max(...ys),
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys)
+  };
+}
+
+function nestingStudioArea(points: Array<{ x: number; y: number }>) {
+  let total = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const next = points[(index + 1) % points.length];
+    total += point.x * next.y - next.x * point.y;
+  }
+  return Math.abs(total / 2);
+}
+
+function nestingStudioCentroid(points: Array<{ x: number; y: number }>) {
+  if (!points.length) return { x: 0, y: 0 };
+  const sum = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+  return { x: sum.x / points.length, y: sum.y / points.length };
+}
+
+function nestingStudioOffsetPolygon(points: Array<{ x: number; y: number }>, amount: number) {
+  if (amount <= 0 || points.length < 3) return points;
+  const center = nestingStudioCentroid(points);
+  return points.map((point) => {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const length = Math.hypot(dx, dy) || 1;
+    return { x: point.x + (dx / length) * amount, y: point.y + (dy / length) * amount };
+  });
+}
+
+function nestingStudioPointOnSegment(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
+  const cross = (point.y - a.y) * (b.x - a.x) - (point.x - a.x) * (b.y - a.y);
+  if (Math.abs(cross) > 0.001) return false;
+  const dot = (point.x - a.x) * (b.x - a.x) + (point.y - a.y) * (b.y - a.y);
+  const lengthSquared = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  return dot >= -0.001 && dot <= lengthSquared + 0.001;
+}
+
+function nestingStudioPointInPolygon(point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+    const a = polygon[index];
+    const b = polygon[previous];
+    if (nestingStudioPointOnSegment(point, a, b)) return true;
+    if (a.y > point.y !== b.y > point.y) {
+      const x = ((b.x - a.x) * (point.y - a.y)) / Math.max(1e-9, b.y - a.y) + a.x;
+      if (point.x < x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function nestingStudioSegmentIntersects(a1: { x: number; y: number }, a2: { x: number; y: number }, b1: { x: number; y: number }, b2: { x: number; y: number }) {
+  const direction = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }) => (c.x - a.x) * (b.y - a.y) - (b.x - a.x) * (c.y - a.y);
+  const d1 = direction(a1, a2, b1);
+  const d2 = direction(a1, a2, b2);
+  const d3 = direction(b1, b2, a1);
+  const d4 = direction(b1, b2, a2);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  return nestingStudioPointOnSegment(b1, a1, a2) || nestingStudioPointOnSegment(b2, a1, a2) || nestingStudioPointOnSegment(a1, b1, b2) || nestingStudioPointOnSegment(a2, b1, b2);
+}
+
+function nestingStudioEdges(polygon: Array<{ x: number; y: number }>) {
+  return polygon.map((point, index) => [point, polygon[(index + 1) % polygon.length]] as const);
+}
+
+function nestingStudioPolygonsOverlap(a: Array<{ x: number; y: number }>, b: Array<{ x: number; y: number }>) {
+  if (a.length < 3 || b.length < 3) return false;
+  const aBox = nestingStudioBounds(a);
+  const bBox = nestingStudioBounds(b);
+  if (aBox.maxX < bBox.minX || aBox.minX > bBox.maxX || aBox.maxY < bBox.minY || aBox.minY > bBox.maxY) return false;
+  for (const [a1, a2] of nestingStudioEdges(a)) {
+    for (const [b1, b2] of nestingStudioEdges(b)) {
+      if (nestingStudioSegmentIntersects(a1, a2, b1, b2)) return true;
+    }
+  }
+  return nestingStudioPointInPolygon(a[0], b) || nestingStudioPointInPolygon(b[0], a);
+}
+
+function nestingStudioPointSegmentDistance(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
+  const lengthSquared = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+  if (lengthSquared <= 1e-9) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = Math.max(0, Math.min(1, ((point.x - a.x) * (b.x - a.x) + (point.y - a.y) * (b.y - a.y)) / lengthSquared));
+  return Math.hypot(point.x - (a.x + (b.x - a.x) * t), point.y - (a.y + (b.y - a.y) * t));
+}
+
+function nestingStudioPolygonDistance(a: Array<{ x: number; y: number }>, b: Array<{ x: number; y: number }>) {
+  if (nestingStudioPolygonsOverlap(a, b)) return 0;
+  let minimum = Number.POSITIVE_INFINITY;
+  for (const [a1, a2] of nestingStudioEdges(a)) {
+    for (const [b1, b2] of nestingStudioEdges(b)) {
+      minimum = Math.min(
+        minimum,
+        nestingStudioPointSegmentDistance(a1, b1, b2),
+        nestingStudioPointSegmentDistance(a2, b1, b2),
+        nestingStudioPointSegmentDistance(b1, a1, a2),
+        nestingStudioPointSegmentDistance(b2, a1, a2)
+      );
+    }
+  }
+  return minimum;
+}
+
+function buildNestingStudioHeat(placements: NestingStudioResult["placements"], sheetWidth: number, sheetHeight: number) {
+  const columns = 6;
+  const rows = 4;
+  const heatZones: NonNullable<NestingStudioResult["heatZones"]> = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      heatZones.push({ x: (sheetWidth / columns) * column, y: (sheetHeight / rows) * row, width: sheetWidth / columns, height: sheetHeight / rows, score: 0, pierces: 0 });
+    }
+  }
+  const warnings: string[] = [];
+  for (const placement of placements) {
+    const box = nestingStudioBounds(placement.polygon);
+    const center = { x: box.minX + box.width / 2, y: box.minY + box.height / 2 };
+    const aspect = Math.max(box.width, box.height) / Math.max(1, Math.min(box.width, box.height));
+    const score = Math.min(100, placement.microJoins.length * 14 + (aspect >= 7 ? 24 : 0) + (box.width * box.height < 2500 ? 12 : 0));
+    const zone = heatZones.find((entry) => center.x >= entry.x && center.x <= entry.x + entry.width && center.y >= entry.y && center.y <= entry.y + entry.height) ?? heatZones[0];
+    zone.score = Math.min(100, zone.score + score);
+    zone.pierces += 1;
+    if (score >= 45) warnings.push(`${placement.name}: high heat concentration.`);
+    if (aspect >= 7) warnings.push(`${placement.name}: possible warping.`);
+  }
+  const activeZones = heatZones.filter((zone) => zone.score > 0 || zone.pierces > 0);
+  return {
+    heatScore: activeZones.reduce((max, zone) => Math.max(max, zone.score), 0),
+    heatZones: activeZones,
+    warnings: Array.from(new Set(warnings))
+  };
+}
+
+function buildNestingStudioCutOrder(placements: NestingStudioResult["placements"], heatZones: NonNullable<NestingStudioResult["heatZones"]> = []) {
+  const remaining = placements.map((placement) => {
+    const box = nestingStudioBounds(placement.polygon);
+    return {
+      cutOrder: 0,
+      placementId: placement.partId,
+      partId: placement.partId,
+      operation: "outer" as const,
+      x: box.minX + box.width / 2,
+      y: box.minY + box.height / 2
+    };
+  });
+  const ordered: NonNullable<NestingStudioResult["cutOrder"]> = [];
+  let cursor = { x: 0, y: 0 };
+  while (remaining.length) {
+    let bestIndex = 0;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidate = remaining[index];
+      const recentHeatPenalty = ordered.slice(-4).some((item) => Math.hypot(item.x - candidate.x, item.y - candidate.y) < 180) ? 250 : 0;
+      const candidateHotZone = heatZones.find((zone) => zone.score >= 45 && candidate.x >= zone.x && candidate.x <= zone.x + zone.width && candidate.y >= zone.y && candidate.y <= zone.y + zone.height);
+      const sameHotZonePenalty = candidateHotZone && ordered.slice(-4).some((item) => item.x >= candidateHotZone.x && item.x <= candidateHotZone.x + candidateHotZone.width && item.y >= candidateHotZone.y && item.y <= candidateHotZone.y + candidateHotZone.height) ? 800 : 0;
+      const score = Math.hypot(candidate.x - cursor.x, candidate.y - cursor.y) + recentHeatPenalty + sameHotZonePenalty;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    const [next] = remaining.splice(bestIndex, 1);
+    ordered.push({ ...next, cutOrder: ordered.length + 1 });
+    cursor = { x: next.x, y: next.y };
+  }
+  return ordered;
+}
+
+function buildNestingStudioDxf(result: NestingStudioResult, sheetWidth: number, sheetHeight: number, customerName: string) {
+  const polyline = (points: Array<{ x: number; y: number }>, layer: string) =>
+    `0\nLWPOLYLINE\n8\n${layer}\n90\n${points.length}\n70\n1\n${points.map((point) => `10\n${point.x.toFixed(3)}\n20\n${point.y.toFixed(3)}\n`).join("")}`;
+  const line = (start: { x: number; y: number }, end: { x: number; y: number }, layer: string) =>
+    `0\nLINE\n8\n${layer}\n10\n${start.x.toFixed(3)}\n20\n${start.y.toFixed(3)}\n11\n${end.x.toFixed(3)}\n21\n${end.y.toFixed(3)}\n`;
+  const text = (value: string, point: { x: number; y: number }, layer: string, height = 10) =>
+    `0\nTEXT\n8\n${layer}\n10\n${point.x.toFixed(3)}\n20\n${point.y.toFixed(3)}\n40\n${height}\n1\n${value}\n`;
+  let dxf = "0\nSECTION\n2\nENTITIES\n";
+  dxf += polyline([{ x: 0, y: 0 }, { x: sheetWidth, y: 0 }, { x: sheetWidth, y: sheetHeight }, { x: 0, y: sheetHeight }], "SHEET");
+  dxf += text(`${customerName} - Nesting Studio`, { x: 20, y: Math.max(20, sheetHeight - 40) }, "TEXT", 25);
+  for (const placement of result.placements) {
+    dxf += polyline(placement.polygon, "CUT");
+    dxf += line(placement.leadIn.start, placement.leadIn.end, "LEAD_IN");
+    for (const join of placement.microJoins) dxf += line({ x: join.x - 3, y: join.y }, { x: join.x + 3, y: join.y }, "MICRO_JOIN");
+  }
+  for (const operation of result.cutOrder ?? []) {
+    dxf += text(String(operation.cutOrder), { x: operation.x, y: operation.y }, "CUT_ORDER", 10);
+  }
+  return `${dxf}0\nENDSEC\n0\nEOF\n`;
+}
+
+function recalculateNestingStudioResult(result: NestingStudioResult, sheetWidth: number, sheetHeight: number, border: number, spacing: number, kerf: number, customerName: string): NestingStudioResult {
+  const warnings: string[] = [...result.unplaced.map((part) => `Could not place ${part.name}`)];
+  const clearance = Math.max(0, spacing + kerf);
+  const spacingBoundaryOffset = clearance / 2;
+  if (spacing < kerf || clearance < 0.5) warnings.push("Part spacing may be too small for kerf and laser clearance.");
+  for (const placement of result.placements) {
+    const box = nestingStudioBounds(placement.polygon);
+    if (box.minX < border || box.minY < border || box.maxX > sheetWidth - border || box.maxY > sheetHeight - border) {
+      warnings.push(`${placement.name} is outside sheet or border.`);
+    }
+    const aspect = Math.max(box.width, box.height) / Math.max(1, Math.min(box.width, box.height));
+    if (aspect >= 8) warnings.push(`${placement.name}: long narrow parts may warp.`);
+    if (placement.microJoins.length >= 4) warnings.push(`${placement.name}: high heat concentration.`);
+  }
+  for (let index = 0; index < result.placements.length; index += 1) {
+    const a = result.placements[index];
+    const aBox = nestingStudioBounds(a.polygon);
+    for (let nextIndex = index + 1; nextIndex < result.placements.length; nextIndex += 1) {
+      const b = result.placements[nextIndex];
+      const bBox = nestingStudioBounds(b.polygon);
+      const aBoundary = nestingStudioOffsetPolygon(a.polygon, spacingBoundaryOffset);
+      const bBoundary = nestingStudioOffsetPolygon(b.polygon, spacingBoundaryOffset);
+      if (nestingStudioPolygonsOverlap(a.polygon, b.polygon)) {
+        warnings.push(`${a.name} overlaps ${b.name}.`);
+        continue;
+      }
+      if (clearance > 0 && (nestingStudioPolygonsOverlap(aBoundary, bBoundary) || nestingStudioPolygonDistance(aBoundary, bBoundary) <= 0.01)) warnings.push(`${a.name} is too close to ${b.name}.`);
+      const aCenter = { x: aBox.minX + aBox.width / 2, y: aBox.minY + aBox.height / 2 };
+      const bCenter = { x: bBox.minX + bBox.width / 2, y: bBox.minY + bBox.height / 2 };
+      if (Math.hypot(aCenter.x - bCenter.x, aCenter.y - bCenter.y) < 80) warnings.push("Many pierces close together.");
+    }
+  }
+  const usedArea = result.placements.reduce((sum, placement) => sum + nestingStudioArea(placement.polygon), 0);
+  const sheetArea = Math.max(1, sheetWidth * sheetHeight);
+  const usagePercent = Number(((usedArea / sheetArea) * 100).toFixed(2));
+  const wastePercent = Number((100 - usagePercent).toFixed(2));
+  const heat = buildNestingStudioHeat(result.placements, sheetWidth, sheetHeight);
+  const cutOrder = buildNestingStudioCutOrder(result.placements, heat.heatZones);
+  const placements = result.placements.map((placement) => ({
+    ...placement,
+    cutOrder: cutOrder.find((operation) => operation.placementId === placement.partId)?.cutOrder
+  }));
+  const next = { ...result, placements, usagePercent, wastePercent, cutOrder, heatScore: heat.heatScore, heatZones: heat.heatZones, warnings: Array.from(new Set([...warnings, ...heat.warnings])) };
+  return { ...next, dxf: buildNestingStudioDxf(next, sheetWidth, sheetHeight, customerName) };
+}
+
+function getNestingStudioFootprint(result: NestingStudioResult | null) {
+  if (!result?.placements.length) return { width: 0, height: 0, area: 0 };
+  const points = result.placements.flatMap((placement) => placement.polygon);
+  const bounds = nestingStudioBounds(points);
+  return {
+    width: bounds.width,
+    height: bounds.height,
+    area: result.placements.reduce((sum, placement) => sum + nestingStudioArea(placement.polygon), 0)
+  };
+}
+
+function createOffcutPreviewDataUrl(offcut: NestingOffcutRecord) {
+  const width = Math.max(1, Number(offcut.width) || 1);
+  const height = Math.max(1, Number(offcut.height) || 1);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="140" height="80" viewBox="0 0 ${width} ${height}"><rect x="0" y="0" width="${width}" height="${height}" fill="#020617" stroke="#93c5fd" stroke-width="${Math.max(width, height) / 90}"/><rect x="${width * 0.08}" y="${height * 0.08}" width="${width * 0.84}" height="${height * 0.84}" fill="rgba(96,165,250,0.15)" stroke="rgba(147,197,253,0.45)" stroke-dasharray="${Math.max(width, height) / 30} ${Math.max(width, height) / 45}"/></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function detectPdfDrawingPartsFromCanvas(
   canvas: HTMLCanvasElement,
   fileName: string,
@@ -1823,6 +2685,10 @@ function buildDxfFromSegments(segments: DxfSegment[]) {
     )
     .join("");
   return `0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${lines}0\nENDSEC\n0\nEOF\n`;
+}
+
+function appendDxfSegments(target: DxfSegment[], source: DxfSegment[]) {
+  for (const segment of source) target.push(segment);
 }
 
 function splitSegmentsIntoParts(segments: DxfSegment[]) {
@@ -2794,6 +3660,15 @@ type ViewMode =
   | "brain_center"
   | "manufacturing_memory"
   | "profit_intelligence"
+  | "material_prediction"
+  | "ai_production_queue"
+  | "lead_time_intelligence"
+  | "sheet_optimizer"
+  | "nesting_intelligence"
+  | "nesting_workspace"
+  | "nesting_studio"
+  | "dxf_error_detection"
+  | "production_assistant"
   | "part_dna"
   | "qr"
   | "files"
@@ -2890,12 +3765,12 @@ function BrandWordmark({
 const UI = {
   fontFamily: '"Inter", "Segoe UI", sans-serif',
   colors: {
-    appBg: "#202226",
-    shellBg: "#1a1c20",
-    pageBg: "#23262d",
-    cardBg: "rgba(17, 24, 39, 0.7)",
-    cardBgStrong: "rgba(15, 23, 42, 0.82)",
-    border: "rgba(126, 141, 160, 0.18)",
+    appBg: "#07111f",
+    shellBg: "#10161f",
+    pageBg: "#07111f",
+    cardBg: "rgba(12, 20, 34, 0.72)",
+    cardBgStrong: "rgba(12, 20, 34, 0.9)",
+    border: "rgba(126, 141, 160, 0.09)",
     borderStrong: "rgba(92, 201, 138, 0.28)",
     text: "rgba(244, 247, 251, 0.94)",
     muted: "rgba(169, 180, 197, 0.74)",
@@ -2985,7 +3860,7 @@ function DesignSystemStyles() {
 
       [data-qx-ui] .qx-card {
         background: ${UI.colors.cardBg};
-        border: 1px solid ${UI.colors.border};
+        border: 1px solid transparent;
         border-radius: ${UI.radius.md}px;
         box-shadow: ${UI.shadow.card};
       }
@@ -3030,6 +3905,7 @@ function PageContainer({
 }) {
   return (
     <div
+      data-page-container="true"
       style={{
         flex: 1,
         padding: 24,
@@ -3061,7 +3937,7 @@ function Card({
         padding: compact ? 16 : 20,
         borderRadius: UI.radius.md,
         background: UI.colors.cardBg,
-        border: `1px solid ${UI.colors.border}`,
+        border: "1px solid transparent",
         boxShadow: UI.shadow.card,
         ...style
       }}
@@ -3354,6 +4230,10 @@ function App() {
   const [chatUser] = useState("Shaun");
   const [text, setText] = useState("");
   const [log, setLog] = useState<Array<string | ChatMsg>>([]);
+  const [supportThreads, setSupportThreads] = useState<SupportThread[]>([]);
+  const [selectedSupportThreadKey, setSelectedSupportThreadKey] = useState<string | null>(null);
+  const [supportLoading, setSupportLoading] = useState(false);
+  const [supportStatus, setSupportStatus] = useState<string | null>(null);
   const [billingEmail, setBillingEmail] = useState("owner@reimec.co.za");
   const [billing, setBilling] = useState<BillingStatus>({ status: null, currentPeriodEnd: null, hasAccess: null });
   const [billingBusy, setBillingBusy] = useState(false);
@@ -3570,6 +4450,17 @@ function App() {
   const [stockMaterialFilter, setStockMaterialFilter] = useState("");
   const [stockThicknessFilter, setStockThicknessFilter] = useState("");
   const [stockViewFilter, setStockViewFilter] = useState<"all" | "available" | "reserved" | "low_stock" | "offcuts_only">("all");
+  const [stockAddMode, setStockAddMode] = useState<"sheet" | "offcut" | null>(null);
+  const [stockAddForm, setStockAddForm] = useState({
+    material: "Mild Steel",
+    thickness: "3",
+    width: "3000",
+    height: "1500",
+    quantity: "1",
+    location: "Rack",
+    supplier: "",
+    costPerSheet: ""
+  });
   const [stockQuoteSuggestion, setStockQuoteSuggestion] = useState<StockSuggestion | null>(null);
   const [stockJobSuggestion, setStockJobSuggestion] = useState<StockSuggestion | null>(null);
   const [stockQuoteOffcutMatch, setStockQuoteOffcutMatch] = useState<OffcutBrainMatchResult | null>(null);
@@ -3766,8 +4657,21 @@ function App() {
   const [cloudEvents, setCloudEvents] = useState<CloudSyncEventRecord[]>([]);
   const [brainEvents, setBrainEvents] = useState<BrainEventRecord[]>([]);
   const [brainRecommendations, setBrainRecommendations] = useState<BrainRecommendationRecord[]>([]);
+  const [brainDashboard, setBrainDashboard] = useState<BrainDashboardRecord | null>(null);
   const [brainLoading, setBrainLoading] = useState(false);
   const [brainError, setBrainError] = useState<string | null>(null);
+  const [brainCenterDetail, setBrainCenterDetail] = useState<
+    | "profit"
+    | "materials"
+    | "offcuts"
+    | "queue"
+    | "lead_time"
+    | "dxf_errors"
+    | "events"
+    | "nesting_purchasing"
+    | "production_assistant"
+    | null
+  >(null);
   const [manufacturingMemories, setManufacturingMemories] = useState<ManufacturingMemoryRecord[]>([]);
   const [manufacturingPatterns, setManufacturingPatterns] = useState<KnownPatternRecord[]>([]);
   const [manufacturingMemoryLoading, setManufacturingMemoryLoading] = useState(false);
@@ -3777,6 +4681,104 @@ function App() {
   const [profitInsights, setProfitInsights] = useState<ProfitInsight[]>([]);
   const [profitLoading, setProfitLoading] = useState(false);
   const [profitError, setProfitError] = useState<string | null>(null);
+  const [materialForecasts, setMaterialForecasts] = useState<MaterialUsageForecastRecord[]>([]);
+  const [materialShortages, setMaterialShortages] = useState<MaterialShortageRecord[]>([]);
+  const [purchaseRecommendations, setPurchaseRecommendations] = useState<PurchaseRecommendationRecord[]>([]);
+  const [materialPredictionLoading, setMaterialPredictionLoading] = useState(false);
+  const [materialPredictionError, setMaterialPredictionError] = useState<string | null>(null);
+  const [productionQueuePlan, setProductionQueuePlan] = useState<ProductionQueuePlanRecord | null>(null);
+  const [productionQueueScores, setProductionQueueScores] = useState<ProductionQueueScoreRecord[]>([]);
+  const [productionQueueLoading, setProductionQueueLoading] = useState(false);
+  const [productionQueueError, setProductionQueueError] = useState<string | null>(null);
+  const [leadTimePrediction, setLeadTimePrediction] = useState<LeadTimePredictionRecord | null>(null);
+  const [leadTimeLoading, setLeadTimeLoading] = useState(false);
+  const [leadTimeError, setLeadTimeError] = useState<string | null>(null);
+  const [sheetOptimizerMaterial, setSheetOptimizerMaterial] = useState("Mild Steel");
+  const [sheetOptimizerThickness, setSheetOptimizerThickness] = useState("1.5");
+  const [sheetOptimizerWidth, setSheetOptimizerWidth] = useState("1000");
+  const [sheetOptimizerHeight, setSheetOptimizerHeight] = useState("800");
+  const [sheetOptimizerResult, setSheetOptimizerResult] = useState<SheetOptimizationResultRecord | null>(null);
+  const [sheetOptimizerLoading, setSheetOptimizerLoading] = useState(false);
+  const [sheetOptimizerError, setSheetOptimizerError] = useState<string | null>(null);
+  const [nestingPlans, setNestingPlans] = useState<NestingPlanRecord[]>([]);
+  const [nestingSkippedGroups, setNestingSkippedGroups] = useState<NestingSkippedGroupRecord[]>([]);
+  const [nestingLoading, setNestingLoading] = useState(false);
+  const [nestingError, setNestingError] = useState<string | null>(null);
+  const [advancedNestMaterial, setAdvancedNestMaterial] = useState("Mild Steel");
+  const [advancedNestThickness, setAdvancedNestThickness] = useState("3");
+  const [advancedNestSheetWidth, setAdvancedNestSheetWidth] = useState("3000");
+  const [advancedNestSheetHeight, setAdvancedNestSheetHeight] = useState("1500");
+  const [advancedNestKerf, setAdvancedNestKerf] = useState("0.2");
+  const [advancedNestBorder, setAdvancedNestBorder] = useState("10");
+  const [advancedNestSpacing, setAdvancedNestSpacing] = useState("5");
+  const [advancedNestAllowCommonLine, setAdvancedNestAllowCommonLine] = useState(true);
+  const [advancedNestEnableMicroJoins, setAdvancedNestEnableMicroJoins] = useState(true);
+  const [advancedNestLeadInType, setAdvancedNestLeadInType] = useState<"line" | "arc">("line");
+  const [advancedNestLeadInLength, setAdvancedNestLeadInLength] = useState("3");
+  const [advancedNestResult, setAdvancedNestResult] = useState<AdvancedNestingPlanRecord | null>(null);
+  const [nestingStudioCustomer, setNestingStudioCustomer] = useState("Walk-in");
+  const [nestingStudioNestName, setNestingStudioNestName] = useState("Nesting Studio");
+  const [nestingStudioMaterial, setNestingStudioMaterial] = useState("Mild Steel");
+  const [nestingStudioThickness, setNestingStudioThickness] = useState("3");
+  const [nestingStudioSheetWidth, setNestingStudioSheetWidth] = useState("3000");
+  const [nestingStudioSheetHeight, setNestingStudioSheetHeight] = useState("1500");
+  const [nestingStudioKerf, setNestingStudioKerf] = useState("0.2");
+  const [nestingStudioSpacing, setNestingStudioSpacing] = useState("5");
+  const [nestingStudioBorder, setNestingStudioBorder] = useState("10");
+  const [nestingStudioResult, setNestingStudioResult] = useState<NestingStudioResult | null>(null);
+  const [nestingStudioExportPath, setNestingStudioExportPath] = useState<string | null>(null);
+  const [nestingStudioExport, setNestingStudioExport] = useState<NestingStudioExportRecord | null>(null);
+  const [nestingStudioLoading, setNestingStudioLoading] = useState(false);
+  const [nestingStudioError, setNestingStudioError] = useState<string | null>(null);
+  const [nestingStudioSelectedPartId, setNestingStudioSelectedPartId] = useState<string | null>(null);
+  const [nestingStudioSnapToGrid, setNestingStudioSnapToGrid] = useState(true);
+  const [nestingStudioShowSpacingBoundary, setNestingStudioShowSpacingBoundary] = useState(true);
+  const [nestingStudioShowNfpDebug, setNestingStudioShowNfpDebug] = useState(false);
+  const [nestingStudioOffcuts, setNestingStudioOffcuts] = useState<NestingOffcutRecord[]>([]);
+  const [nestingStudioSelectedOffcutId, setNestingStudioSelectedOffcutId] = useState<number | null>(null);
+  const [nestingStudioOffcutRecommendation, setNestingStudioOffcutRecommendation] = useState<NestingStudioOffcutRecommendation | null>(null);
+  const nestingStudioCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nestingStudioDragRef = useRef<{ partId: string; offsetX: number; offsetY: number } | null>(null);
+  const [nestingWorkspaceItems, setNestingWorkspaceItems] = useState<NestingWorkspaceRecord[]>([]);
+  const [nestingWorkspaceActive, setNestingWorkspaceActive] = useState<NestingWorkspaceRecord | null>(null);
+  const [nestingWorkspaceOffcuts, setNestingWorkspaceOffcuts] = useState<NestingOffcutRecord[]>([]);
+  const [nestingWorkspaceHistory, setNestingWorkspaceHistory] = useState<NestingWorkspaceRecord[]>([]);
+  const [nestingWorkspaceRecommendation, setNestingWorkspaceRecommendation] = useState<NestingOffcutRecommendation | null>(null);
+  const [nestingWorkspaceLoading, setNestingWorkspaceLoading] = useState(false);
+  const [nestingWorkspaceError, setNestingWorkspaceError] = useState<string | null>(null);
+  const [nestingWorkspaceCustomerId, setNestingWorkspaceCustomerId] = useState("");
+  const [nestingWorkspaceCustomerName, setNestingWorkspaceCustomerName] = useState("Walk-in");
+  const [nestingWorkspaceNestName, setNestingWorkspaceNestName] = useState("New Nest");
+  const [nestingWorkspaceMaterial, setNestingWorkspaceMaterial] = useState("Mild Steel");
+  const [nestingWorkspaceThickness, setNestingWorkspaceThickness] = useState("3");
+  const [nestingWorkspaceSheetWidth, setNestingWorkspaceSheetWidth] = useState("3000");
+  const [nestingWorkspaceSheetHeight, setNestingWorkspaceSheetHeight] = useState("1500");
+  const [nestingWorkspaceBorder, setNestingWorkspaceBorder] = useState("10");
+  const [nestingWorkspaceKerf, setNestingWorkspaceKerf] = useState("0.2");
+  const [nestingWorkspaceSpacing, setNestingWorkspaceSpacing] = useState("5");
+  const [nestingWorkspaceAllowRotation, setNestingWorkspaceAllowRotation] = useState(true);
+  const [nestingWorkspaceAllowCommonLine, setNestingWorkspaceAllowCommonLine] = useState(true);
+  const [nestingWorkspaceEnableMicroJoins, setNestingWorkspaceEnableMicroJoins] = useState(true);
+  const [nestingWorkspaceLeadInType, setNestingWorkspaceLeadInType] = useState<"line" | "arc">("line");
+  const [nestingWorkspaceLeadInLength, setNestingWorkspaceLeadInLength] = useState("3");
+  const [nestingWorkspaceSelectedPlacementId, setNestingWorkspaceSelectedPlacementId] = useState<number | null>(null);
+  const [nestingWorkspaceManualMode, setNestingWorkspaceManualMode] = useState(false);
+  const [nestingWorkspaceShowGrid, setNestingWorkspaceShowGrid] = useState(true);
+  const [nestingWorkspaceShowCollision, setNestingWorkspaceShowCollision] = useState(true);
+  const [nestingWorkspaceShowBorder, setNestingWorkspaceShowBorder] = useState(true);
+  const [nestingWorkspaceShowBoundingBoxes, setNestingWorkspaceShowBoundingBoxes] = useState(false);
+  const [nestingWorkspaceZoom, setNestingWorkspaceZoom] = useState(1);
+  const [productionAssistantMessages, setProductionAssistantMessages] = useState<
+    Array<{ role: "user" | "assistant"; text: string; at: string; response?: ProductionAssistantResponse | null }>
+  >([]);
+  const [productionAssistantInput, setProductionAssistantInput] = useState("");
+  const [productionAssistantLoading, setProductionAssistantLoading] = useState(false);
+  const [productionAssistantError, setProductionAssistantError] = useState<string | null>(null);
+  const [dxfErrorFile, setDxfErrorFile] = useState<File | null>(null);
+  const [dxfErrorThickness, setDxfErrorThickness] = useState("1.5");
+  const [dxfErrorResult, setDxfErrorResult] = useState<DxfErrorCheckResult | null>(null);
+  const [dxfErrorLoading, setDxfErrorLoading] = useState(false);
+  const [dxfErrorError, setDxfErrorError] = useState<string | null>(null);
   const [regeneratingJobCards, setRegeneratingJobCards] = useState(false);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
@@ -3803,6 +4805,8 @@ function App() {
     activeServer?.channels[0];
   const roomId = activeChannel?.name ?? "general";
   const canManageAccounts = user?.email?.trim().toLowerCase() === APP_OWNER_EMAIL;
+  const selectedSupportThread =
+    supportThreads.find((thread) => thread.threadKey === selectedSupportThreadKey) ?? supportThreads[0] ?? null;
   const workspaceLocked = Boolean(workspaceId) && billing.hasAccess === false && !canManageAccounts;
   const allowedFeatureSet = useMemo(() => {
     if (!deviceAllowedFeatures || deviceAllowedFeatures.length === 0) return null;
@@ -3816,24 +4820,25 @@ function App() {
     if (mode === "admin_subscriptions") return canManageAccounts;
     if (mode === "settings") return true;
     if (!allowedFeatureSet) return true;
+    if (mode === "nesting_workspace" && (allowedFeatureSet.has("nesting_studio") || allowedFeatureSet.has("nesting_intelligence"))) return true;
+    if (mode === "nesting_studio" && (allowedFeatureSet.has("nesting_workspace") || allowedFeatureSet.has("nesting_intelligence"))) return true;
+    if (mode === "production_assistant" && allowedFeatureSet.has("brain_center")) return true;
     return allowedFeatureSet.has(mode as AppFeatureId);
   };
   const sidebarItems: Array<{ id: ViewMode; label: string }> = [
     { id: "billing", label: "Bill" },
     { id: "settings", label: "Settings" },
     { id: "brain_center", label: "Brain" },
-    { id: "manufacturing_memory", label: "Memory" },
-    { id: "profit_intelligence", label: "Profit" },
     { id: "chat", label: "Chat" },
     { id: "jobs", label: "Jobs" },
     { id: "email", label: "Email" },
     { id: "part_dna", label: "Part DNA" },
     { id: "quotes", label: "Quotes" },
-    { id: "tank", label: "Tank" },
     { id: "documents", label: "Docs" },
     { id: "customers", label: "Cust" },
     { id: "image_dxf", label: "ImgDXF" },
     { id: "ai_assistant", label: "Queue" },
+    { id: "nesting_workspace", label: "Nest" },
     { id: "company_live", label: "Live" },
     { id: "admin_subscriptions", label: "Subs" }
   ];
@@ -4771,6 +5776,68 @@ function App() {
     throw lastError instanceof Error ? lastError : new Error("Failed to fetch");
   }
 
+  async function loadSupportThreads() {
+    if (!token) return;
+    if (!canManageAccounts && !workspaceId) return;
+    setSupportLoading(true);
+    setSupportStatus(null);
+    try {
+      const query = canManageAccounts ? "" : `?workspaceId=${encodeURIComponent(workspaceId ?? "")}`;
+      const res = await apiFetch(`/api/support/threads${query}`);
+      const data = (await res.json().catch(() => null)) as { error?: string; threads?: SupportThread[] } | null;
+      if (!res.ok) {
+        setSupportStatus(data?.error ?? "Failed to load support chats.");
+        return;
+      }
+      const threads = data?.threads ?? [];
+      setSupportThreads(threads);
+      setSelectedSupportThreadKey((current) =>
+        current && threads.some((thread) => thread.threadKey === current)
+          ? current
+          : threads[0]?.threadKey ?? null
+      );
+    } catch (error) {
+      setSupportStatus(error instanceof Error ? error.message : "Failed to load support chats.");
+    } finally {
+      setSupportLoading(false);
+    }
+  }
+
+  async function sendSupportMessage() {
+    const messageText = text.trim();
+    if (!messageText) return;
+    const targetThread = selectedSupportThread;
+    const targetWorkspaceId = canManageAccounts ? targetThread?.workspaceId : workspaceId;
+    if (!targetWorkspaceId) {
+      setSupportStatus(canManageAccounts ? "Select a user chat first." : "No workspace selected.");
+      return;
+    }
+    if (canManageAccounts && !targetThread?.userId) {
+      setSupportStatus("Select a user chat first.");
+      return;
+    }
+    setSupportStatus(null);
+    try {
+      const res = await apiFetch("/api/support/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId: targetWorkspaceId,
+          threadUserId: canManageAccounts ? targetThread?.userId : undefined,
+          text: messageText
+        })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setSupportStatus(data?.error ?? "Failed to send message.");
+        return;
+      }
+      setText("");
+      await loadSupportThreads();
+    } catch (error) {
+      setSupportStatus(error instanceof Error ? error.message : "Failed to send message.");
+    }
+  }
+
   async function getApiFailureDetail() {
     if (!window.desktopShell?.getApiStatus) return null;
     try {
@@ -5161,6 +6228,156 @@ function App() {
   }, [viewMode, deviceAllowedFeatures, workspaceLocked, canManageAccounts]);
 
   useEffect(() => {
+    if (viewMode === "nesting_intelligence" || viewMode === "nesting_studio") {
+      setViewMode("nesting_workspace");
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "nesting_studio" && viewMode !== "nesting_workspace") return;
+    void loadNestingStudioOffcuts();
+  }, [viewMode]);
+
+  useEffect(() => {
+    recommendNestingStudioOffcut();
+  }, [nestingStudioResult, nestingStudioOffcuts, nestingStudioMaterial, nestingStudioThickness]);
+
+  useEffect(() => {
+    const resetScroll = () => {
+      window.scrollTo({ top: 0, left: 0 });
+      document.querySelectorAll<HTMLElement>('[data-page-container="true"]').forEach((element) => {
+        element.scrollTop = 0;
+        element.scrollLeft = 0;
+      });
+    };
+    window.requestAnimationFrame(resetScroll);
+    const shortTimer = window.setTimeout(resetScroll, 80);
+    const settledTimer = window.setTimeout(resetScroll, 300);
+    return () => {
+      window.clearTimeout(shortTimer);
+      window.clearTimeout(settledTimer);
+    };
+  }, [viewMode]);
+
+  useEffect(() => {
+    const canvas = nestingStudioCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const sheetWidth = Math.max(1, Number(nestingStudioSheetWidth) || 3000);
+    const sheetHeight = Math.max(1, Number(nestingStudioSheetHeight) || 1500);
+    const scale = Math.min((canvas.width - 24) / sheetWidth, (canvas.height - 24) / sheetHeight);
+    const offsetX = (canvas.width - sheetWidth * scale) / 2;
+    const offsetY = (canvas.height - sheetHeight * scale) / 2;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#07111f";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#94a3b8";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(offsetX, offsetY, sheetWidth * scale, sheetHeight * scale);
+    const border = Math.max(0, Number(nestingStudioBorder) || 0);
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = "rgba(110,231,183,0.7)";
+    ctx.strokeRect(offsetX + border * scale, offsetY + border * scale, Math.max(0, (sheetWidth - border * 2) * scale), Math.max(0, (sheetHeight - border * 2) * scale));
+    ctx.setLineDash([]);
+    const spacingBoundaryOffset = Math.max(0, (Number(nestingStudioSpacing) || 0) + (Number(nestingStudioKerf) || 0)) / 2;
+    for (const zone of nestingStudioResult?.heatZones ?? []) {
+      const alpha = Math.min(0.42, 0.08 + (zone.score / 100) * 0.34);
+      ctx.fillStyle = `rgba(248,113,113,${alpha})`;
+      ctx.fillRect(offsetX + zone.x * scale, offsetY + zone.y * scale, zone.width * scale, zone.height * scale);
+      if (zone.score >= 45) {
+        ctx.strokeStyle = "rgba(251,191,36,0.55)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(offsetX + zone.x * scale, offsetY + zone.y * scale, zone.width * scale, zone.height * scale);
+      }
+    }
+    if (nestingStudioShowNfpDebug && nestingStudioResult?.nfpDebug) {
+      const drawPolygon = (polygon: Array<{ x: number; y: number }>, strokeStyle: string, fillStyle?: string) => {
+        if (polygon.length < 2) return;
+        ctx.beginPath();
+        polygon.forEach((point, index) => {
+          const x = offsetX + point.x * scale;
+          const y = offsetY + point.y * scale;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        if (fillStyle) {
+          ctx.fillStyle = fillStyle;
+          ctx.fill();
+        }
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      };
+      ctx.setLineDash([8, 6]);
+      nestingStudioResult.nfpDebug.collisionZones.slice(-24).forEach((zone) => drawPolygon(zone, "rgba(248,113,113,0.42)", "rgba(248,113,113,0.06)"));
+      nestingStudioResult.nfpDebug.boundaries.slice(-24).forEach((boundary) => drawPolygon(boundary, "rgba(168,85,247,0.48)"));
+      ctx.setLineDash([]);
+      for (const point of nestingStudioResult.nfpDebug.validPoints.slice(0, 300)) {
+        ctx.fillStyle = "rgba(56,189,248,0.86)";
+        ctx.beginPath();
+        ctx.arc(offsetX + point.x * scale, offsetY + point.y * scale, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    for (const placement of nestingStudioResult?.placements ?? []) {
+      if (nestingStudioShowSpacingBoundary && spacingBoundaryOffset > 0) {
+        const boundary = nestingStudioOffsetPolygon(placement.polygon, spacingBoundaryOffset);
+        ctx.beginPath();
+        boundary.forEach((point, index) => {
+          const x = offsetX + point.x * scale;
+          const y = offsetY + point.y * scale;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.setLineDash([7, 5]);
+        ctx.strokeStyle = "rgba(251,191,36,0.72)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath();
+      placement.polygon.forEach((point, index) => {
+        const x = offsetX + point.x * scale;
+        const y = offsetY + point.y * scale;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = "rgba(110,231,183,0.22)";
+      ctx.strokeStyle = placement.partId === nestingStudioSelectedPartId ? "#facc15" : "#6ee7b7";
+      ctx.lineWidth = placement.partId === nestingStudioSelectedPartId ? 3 : 1.5;
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#e5e7eb";
+      ctx.font = "11px Inter, sans-serif";
+      ctx.fillText(placement.name, offsetX + placement.x * scale + 4, offsetY + placement.y * scale + 14);
+      ctx.strokeStyle = "#38bdf8";
+      ctx.beginPath();
+      ctx.moveTo(offsetX + placement.leadIn.start.x * scale, offsetY + placement.leadIn.start.y * scale);
+      ctx.lineTo(offsetX + placement.leadIn.end.x * scale, offsetY + placement.leadIn.end.y * scale);
+      ctx.stroke();
+    }
+    for (const operation of nestingStudioResult?.cutOrder ?? []) {
+      const x = offsetX + operation.x * scale;
+      const y = offsetY + operation.y * scale;
+      ctx.fillStyle = "rgba(250,204,21,0.9)";
+      ctx.beginPath();
+      ctx.arc(x, y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#111827";
+      ctx.font = "bold 10px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(operation.cutOrder), x, y + 0.5);
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+    }
+  }, [nestingStudioResult, nestingStudioSheetWidth, nestingStudioSheetHeight, nestingStudioBorder, nestingStudioSpacing, nestingStudioKerf, nestingStudioShowSpacingBoundary, nestingStudioShowNfpDebug, nestingStudioSelectedPartId]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const legacyPassword = localStorage.getItem(AUTH_PASSWORD_KEY);
@@ -5234,13 +6451,21 @@ function App() {
 
     socket.on("system", (msg: string) => setLog((l) => [msg, ...l]));
     socket.on("message", (msg: ChatMsg) => setLog((l) => [msg, ...l]));
+    socket.on("support:message", () => {
+      if (viewMode === "chat") void loadSupportThreads();
+    });
     socket.on("disconnect", () => setLog((l) => ["⚠️ disconnected", ...l]));
 
     return () => {
       socket.removeAllListeners();
       socket.disconnect();
     };
-  }, [socket]);
+  }, [socket, viewMode, token, workspaceId, canManageAccounts, selectedSupportThreadKey]);
+
+  useEffect(() => {
+    if (viewMode !== "chat") return;
+    void loadSupportThreads();
+  }, [viewMode, token, workspaceId, canManageAccounts]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -5367,6 +6592,9 @@ function App() {
       refreshBrainCenter();
       refreshManufacturingMemory();
       refreshProfitIntelligence();
+      refreshMaterialPrediction();
+      refreshProductionQueueBrain();
+      refreshNestingPlans();
       refreshServers();
       refreshFiles();
       refreshLedger();
@@ -5398,6 +6626,68 @@ function App() {
     if (offlineBootMode || !workspaceId || viewMode !== "profit_intelligence" || workspaceLocked) return;
     void refreshProfitIntelligence();
   }, [offlineBootMode, workspaceId, viewMode, workspaceLocked]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "material_prediction" || workspaceLocked) return;
+    void refreshMaterialPrediction();
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "ai_production_queue" || workspaceLocked) return;
+    void refreshProductionQueueBrain();
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "lead_time_intelligence" || workspaceLocked) return;
+    if (smartQueueJobs.length === 0) {
+      void refreshSmartQueue();
+      return;
+    }
+    const targetJobId = smartQueueSelectedJobId ?? smartQueueJobs[0]?.id ?? null;
+    if (!targetJobId) return;
+    void predictLeadTime(targetJobId);
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked, smartQueueJobs, smartQueueSelectedJobId]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "nesting_intelligence" || workspaceLocked) return;
+    void refreshNestingPlans();
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "nesting_workspace" || workspaceLocked) return;
+    void refreshNestingWorkspaceData();
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked]);
+
+  useEffect(() => {
+    if (!nestingWorkspaceActive || viewMode !== "nesting_workspace") return;
+    nestingWorkspaceActive.parts.forEach((part) => {
+      const geometry = parseNestingPreviewGeometry(part);
+      const outerContoursCount = geometry?.outerContours?.length ?? (geometry?.outerContour?.length ? 1 : 0);
+      const innerHolesCount = geometry?.innerHoles?.length ?? geometry?.holes?.length ?? 0;
+      const hasPreviewGeometry = Boolean(part.previewGeometry);
+      const fallbackToBoundingBox = !outerContoursCount && !innerHolesCount && !(geometry?.circles?.length) && !(geometry?.arcs?.length);
+      console.debug("[Nesting Preview Geometry]", {
+        fileName: part.fileName,
+        hasPreviewGeometry,
+        outerContoursCount,
+        innerHolesCount,
+        fallbackToBoundingBox
+      });
+    });
+  }, [nestingWorkspaceActive?.id, nestingWorkspaceActive?.parts.length, nestingWorkspaceActive?.placements.length, viewMode]);
+
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "production_assistant" || workspaceLocked) return;
+    if (productionAssistantMessages.length > 0) return;
+    setProductionAssistantMessages([
+      {
+        role: "assistant",
+        text: "Ask about late jobs, what to cut next, material shortages, low profit jobs, customer debt, DXF errors, or offcuts.",
+        at: new Date().toISOString(),
+        response: null
+      }
+    ]);
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked, productionAssistantMessages.length]);
 
   useEffect(() => {
     if (offlineBootMode || !canManageAccounts || !workspaceId) return;
@@ -6048,6 +7338,62 @@ function App() {
     }
   }
 
+  async function saveStockItem(kind: "sheet" | "offcut") {
+    setStockError(null);
+    const material = stockAddForm.material.trim();
+    const thickness = Number(stockAddForm.thickness);
+    const width = Number(stockAddForm.width);
+    const height = Number(stockAddForm.height);
+    const quantity = kind === "sheet" ? Number(stockAddForm.quantity) : 1;
+    const costPerSheet = stockAddForm.costPerSheet.trim() ? Number(stockAddForm.costPerSheet) : null;
+    if (!material || !Number.isFinite(thickness) || thickness <= 0 || !Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+      setStockError("Enter material, thickness, width, and height before saving stock.");
+      return;
+    }
+    if (kind === "sheet" && (!Number.isFinite(quantity) || quantity <= 0)) {
+      setStockError("Enter a valid sheet quantity.");
+      return;
+    }
+    if (costPerSheet !== null && (!Number.isFinite(costPerSheet) || costPerSheet < 0)) {
+      setStockError("Enter a valid cost per sheet.");
+      return;
+    }
+    try {
+      const path = kind === "sheet" ? "/api/stock/sheets" : "/api/stock/offcuts";
+      const payload =
+        kind === "sheet"
+          ? {
+              material,
+              thickness,
+              width,
+              height,
+              quantity,
+              location: stockAddForm.location.trim() || null,
+              supplier: stockAddForm.supplier.trim() || null,
+              costPerSheet,
+              status: "available"
+            }
+          : {
+              material,
+              thickness,
+              width,
+              height,
+              location: stockAddForm.location.trim() || null,
+              status: "available"
+            };
+      const res = await apiFetch(path, { method: "POST", body: JSON.stringify(payload) });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setStockError(data?.error ?? `Failed to add ${kind}.`);
+        return;
+      }
+      setStockAddMode(null);
+      await refreshStock();
+    } catch (error) {
+      setStockError(error instanceof Error ? error.message : `Failed to add ${kind}.`);
+    }
+  }
+
   async function refreshCloudSyncSettings() {
     const res = await apiFetch("/api/cloud/settings");
     if (!res.ok) return;
@@ -6074,12 +7420,14 @@ function App() {
     setBrainLoading(true);
     setBrainError(null);
     try {
-      const [eventsRes, recommendationsRes] = await Promise.all([
+      const [eventsRes, recommendationsRes, dashboardRes] = await Promise.all([
         apiFetch(`/api/brain/events?workspaceId=${encodeURIComponent(workspaceId)}&limit=80`),
-        apiFetch(`/api/brain/recommendations?workspaceId=${encodeURIComponent(workspaceId)}&status=all&limit=80`)
+        apiFetch(`/api/brain/recommendations?workspaceId=${encodeURIComponent(workspaceId)}&status=all&limit=80`),
+        apiFetch(`/api/brain/dashboard?workspaceId=${encodeURIComponent(workspaceId)}`)
       ]);
       const eventsData = (await eventsRes.json().catch(() => null)) as { error?: string; events?: BrainEventRecord[] } | null;
       const recommendationsData = (await recommendationsRes.json().catch(() => null)) as { error?: string; recommendations?: BrainRecommendationRecord[] } | null;
+      const dashboardData = (await dashboardRes.json().catch(() => null)) as { error?: string; dashboard?: BrainDashboardRecord } | null;
       if (!eventsRes.ok) {
         setBrainError(eventsData?.error ?? "Failed to load brain events.");
         return;
@@ -6088,13 +7436,104 @@ function App() {
         setBrainError(recommendationsData?.error ?? "Failed to load brain recommendations.");
         return;
       }
+      if (!dashboardRes.ok) {
+        setBrainError(dashboardData?.error ?? "Failed to load brain dashboard.");
+        return;
+      }
       setBrainEvents(eventsData?.events ?? []);
       setBrainRecommendations(recommendationsData?.recommendations ?? []);
+      setBrainDashboard(dashboardData?.dashboard ?? null);
     } catch (error) {
       setBrainError(error instanceof Error ? error.message : "Failed to load Brain Center.");
     } finally {
       setBrainLoading(false);
     }
+  }
+
+  async function runBrainOrchestrator(mode: "quick" | "full") {
+    if (!workspaceId) return;
+    setBrainLoading(true);
+    setBrainError(null);
+    try {
+      const res = await apiFetch("/api/brain/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId, mode })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; dashboard?: BrainDashboardRecord } | null;
+      if (!res.ok) {
+        setBrainError(data?.error ?? "Failed to run Qouter X Brain.");
+        return;
+      }
+      if (data?.dashboard) setBrainDashboard(data.dashboard);
+      await refreshBrainCenter();
+    } catch (error) {
+      setBrainError(error instanceof Error ? error.message : "Failed to run Qouter X Brain.");
+    } finally {
+      setBrainLoading(false);
+    }
+  }
+
+  async function openBrainCenterDetail(
+    section: "profit" | "materials" | "offcuts" | "queue" | "lead_time" | "dxf_errors" | "events" | "nesting_purchasing" | "production_assistant"
+  ) {
+    const openDetailPanel = () => {
+      setBrainCenterDetail(section);
+      window.setTimeout(() => {
+        document.querySelector<HTMLElement>('[data-brain-detail="true"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    };
+
+    if (!workspaceId) return;
+    if (section === "profit") {
+      setBrainCenterDetail(null);
+      setViewMode("profit_intelligence");
+      void refreshProfitIntelligence();
+      return;
+    }
+    if (section === "materials") {
+      setBrainCenterDetail(null);
+      setViewMode("material_prediction");
+      void refreshMaterialPrediction();
+      return;
+    }
+    if (section === "offcuts") {
+      setBrainCenterDetail(null);
+      setViewMode("nesting_workspace");
+      void refreshNestingWorkspaceData();
+      return;
+    }
+    if (section === "queue") {
+      setBrainCenterDetail(null);
+      setViewMode("ai_production_queue");
+      void refreshProductionQueueBrain();
+      return;
+    }
+    if (section === "lead_time") {
+      setBrainCenterDetail(null);
+      setViewMode("lead_time_intelligence");
+      if (activeLeadTimeJob) {
+        void predictLeadTime(activeLeadTimeJob.id);
+      }
+      return;
+    }
+    if (section === "dxf_errors") {
+      setBrainCenterDetail(null);
+      setViewMode("dxf_error_detection");
+      return;
+    }
+    if (section === "nesting_purchasing") {
+      setBrainCenterDetail(null);
+      setViewMode("nesting_workspace");
+      void Promise.all([refreshMaterialPrediction(), refreshNestingPlans(), refreshNestingWorkspaceData()]);
+      return;
+    }
+    if (section === "production_assistant") {
+      setBrainCenterDetail(null);
+      setViewMode("production_assistant");
+      return;
+    }
+    openDetailPanel();
   }
 
   async function refreshManufacturingMemory() {
@@ -6201,6 +7640,1181 @@ function App() {
       setProfitError(error instanceof Error ? error.message : "Failed to calculate job profit.");
     } finally {
       setProfitLoading(false);
+    }
+  }
+
+  async function refreshMaterialPrediction() {
+    if (!workspaceId) return;
+    setMaterialPredictionLoading(true);
+    setMaterialPredictionError(null);
+    try {
+      const [forecastRes, shortageRes, purchasingRes] = await Promise.all([
+        apiFetch(`/api/brain/materials/forecast?workspaceId=${encodeURIComponent(workspaceId)}&limit=200`),
+        apiFetch(`/api/brain/materials/shortages?workspaceId=${encodeURIComponent(workspaceId)}`),
+        apiFetch(`/api/brain/purchasing/recommendations?workspaceId=${encodeURIComponent(workspaceId)}&status=open&limit=120`)
+      ]);
+      const forecastData = (await forecastRes.json().catch(() => null)) as { error?: string; forecasts?: MaterialUsageForecastRecord[] } | null;
+      const shortageData = (await shortageRes.json().catch(() => null)) as { error?: string; shortages?: MaterialShortageRecord[] } | null;
+      const purchasingData = (await purchasingRes.json().catch(() => null)) as { error?: string; recommendations?: PurchaseRecommendationRecord[] } | null;
+      if (!forecastRes.ok) {
+        setMaterialPredictionError(forecastData?.error ?? "Failed to load material forecasts.");
+        return;
+      }
+      if (!shortageRes.ok) {
+        setMaterialPredictionError(shortageData?.error ?? "Failed to load material shortages.");
+        return;
+      }
+      if (!purchasingRes.ok) {
+        setMaterialPredictionError(purchasingData?.error ?? "Failed to load purchasing recommendations.");
+        return;
+      }
+      setMaterialForecasts(forecastData?.forecasts ?? []);
+      setMaterialShortages(shortageData?.shortages ?? []);
+      setPurchaseRecommendations(purchasingData?.recommendations ?? []);
+    } catch (error) {
+      setMaterialPredictionError(error instanceof Error ? error.message : "Failed to load Material Prediction.");
+    } finally {
+      setMaterialPredictionLoading(false);
+    }
+  }
+
+  async function rebuildMaterialPrediction() {
+    if (!workspaceId) return;
+    setMaterialPredictionLoading(true);
+    setMaterialPredictionError(null);
+    try {
+      const res = await apiFetch("/api/brain/materials/rebuild-forecast", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, forecastPeriodsDays: [7, 30] })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setMaterialPredictionError(data?.error ?? "Failed to rebuild material forecast.");
+        return;
+      }
+      await refreshMaterialPrediction();
+    } catch (error) {
+      setMaterialPredictionError(error instanceof Error ? error.message : "Failed to rebuild Material Prediction.");
+    } finally {
+      setMaterialPredictionLoading(false);
+    }
+  }
+
+  async function updatePurchaseRecommendation(id: number, action: "mark-ordered" | "dismiss") {
+    if (!workspaceId) return;
+    try {
+      const res = await apiFetch(`/api/brain/purchasing/recommendations/${encodeURIComponent(String(id))}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setMaterialPredictionError(data?.error ?? "Failed to update purchase recommendation.");
+        return;
+      }
+      await refreshMaterialPrediction();
+    } catch (error) {
+      setMaterialPredictionError(error instanceof Error ? error.message : "Failed to update purchase recommendation.");
+    }
+  }
+
+  async function refreshProductionQueueBrain() {
+    if (!workspaceId) return;
+    setProductionQueueLoading(true);
+    setProductionQueueError(null);
+    try {
+      const res = await apiFetch(`/api/brain/queue/current?workspaceId=${encodeURIComponent(workspaceId)}`);
+      const data = (await res.json().catch(() => null)) as { error?: string; plan?: ProductionQueuePlanRecord | null; scores?: ProductionQueueScoreRecord[] } | null;
+      if (!res.ok) {
+        setProductionQueueError(data?.error ?? "Failed to load AI Production Queue.");
+        return;
+      }
+      setProductionQueuePlan(data?.plan ?? null);
+      setProductionQueueScores(data?.scores ?? []);
+    } catch (error) {
+      setProductionQueueError(error instanceof Error ? error.message : "Failed to load AI Production Queue.");
+    } finally {
+      setProductionQueueLoading(false);
+    }
+  }
+
+  async function createProductionQueuePlan() {
+    if (!workspaceId) return;
+    setProductionQueueLoading(true);
+    setProductionQueueError(null);
+    try {
+      const res = await apiFetch("/api/brain/queue/plan", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; plan?: ProductionQueuePlanRecord | null; scoredJobs?: ProductionQueueScoreRecord[] } | null;
+      if (!res.ok) {
+        setProductionQueueError(data?.error ?? "Failed to create AI queue plan.");
+        return;
+      }
+      await refreshProductionQueueBrain();
+    } catch (error) {
+      setProductionQueueError(error instanceof Error ? error.message : "Failed to create AI queue plan.");
+    } finally {
+      setProductionQueueLoading(false);
+    }
+  }
+
+  async function updateProductionQueuePlan(id: number, action: "start" | "complete") {
+    if (!workspaceId) return;
+    setProductionQueueLoading(true);
+    setProductionQueueError(null);
+    try {
+      const res = await apiFetch(`/api/brain/queue/plans/${encodeURIComponent(String(id))}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setProductionQueueError(data?.error ?? `Failed to ${action} AI queue plan.`);
+        return;
+      }
+      await refreshProductionQueueBrain();
+    } catch (error) {
+      setProductionQueueError(error instanceof Error ? error.message : `Failed to ${action} AI queue plan.`);
+    } finally {
+      setProductionQueueLoading(false);
+    }
+  }
+
+  async function predictLeadTime(jobId: number) {
+    if (!workspaceId || !Number.isFinite(jobId)) return;
+    setLeadTimeLoading(true);
+    setLeadTimeError(null);
+    try {
+      const res = await apiFetch("/api/brain/lead-time/predict", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, jobId })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; prediction?: LeadTimePredictionRecord } | null;
+      if (!res.ok) {
+        setLeadTimeError(data?.error ?? "Failed to predict lead time.");
+        return;
+      }
+      setLeadTimePrediction(data?.prediction ?? null);
+    } catch (error) {
+      setLeadTimeError(error instanceof Error ? error.message : "Failed to predict lead time.");
+    } finally {
+      setLeadTimeLoading(false);
+    }
+  }
+
+  async function runSheetOptimization() {
+    if (!workspaceId) return;
+    setSheetOptimizerLoading(true);
+    setSheetOptimizerError(null);
+    try {
+      const res = await apiFetch("/api/brain/sheets/optimize", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          material: sheetOptimizerMaterial,
+          thickness: Number(sheetOptimizerThickness),
+          requiredWidth: Number(sheetOptimizerWidth),
+          requiredHeight: Number(sheetOptimizerHeight),
+          jobId: activeSheetOptimizerJob ? String(activeSheetOptimizerJob.id) : null
+        })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; result?: SheetOptimizationResultRecord } | null;
+      if (!res.ok) {
+        setSheetOptimizerError(data?.error ?? "Failed to optimize sheet source.");
+        return;
+      }
+      setSheetOptimizerResult(data?.result ?? null);
+    } catch (error) {
+      setSheetOptimizerError(error instanceof Error ? error.message : "Failed to optimize sheet source.");
+    } finally {
+      setSheetOptimizerLoading(false);
+    }
+  }
+
+  async function refreshNestingPlans() {
+    if (!workspaceId) return;
+    setNestingLoading(true);
+    setNestingError(null);
+    try {
+      const res = await apiFetch(`/api/brain/nesting/plans?workspaceId=${encodeURIComponent(workspaceId)}`);
+      const data = (await res.json().catch(() => null)) as { error?: string; plans?: NestingPlanRecord[] } | null;
+      if (!res.ok) {
+        setNestingError(data?.error ?? "Failed to load nesting plans.");
+        return;
+      }
+      setNestingPlans(data?.plans ?? []);
+    } catch (error) {
+      setNestingError(error instanceof Error ? error.message : "Failed to load nesting plans.");
+    } finally {
+      setNestingLoading(false);
+    }
+  }
+
+  async function createNestingRecommendations() {
+    if (!workspaceId) return;
+    setNestingLoading(true);
+    setNestingError(null);
+    try {
+      const res = await apiFetch("/api/brain/nesting/recommend", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId })
+      });
+      const data = (await res.json().catch(() => null)) as {
+        error?: string;
+        plans?: NestingPlanRecord[];
+        skippedGroups?: NestingSkippedGroupRecord[];
+      } | null;
+      if (!res.ok) {
+        setNestingError(data?.error ?? "Failed to create nesting recommendations.");
+        return;
+      }
+      setNestingSkippedGroups(data?.skippedGroups ?? []);
+      await refreshNestingPlans();
+    } catch (error) {
+      setNestingError(error instanceof Error ? error.message : "Failed to create nesting recommendations.");
+    } finally {
+      setNestingLoading(false);
+    }
+  }
+
+  async function approveNestingPlan(id: number) {
+    if (!workspaceId) return;
+    setNestingLoading(true);
+    setNestingError(null);
+    try {
+      const res = await apiFetch(`/api/brain/nesting/plans/${encodeURIComponent(String(id))}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setNestingError(data?.error ?? "Failed to approve nesting plan.");
+        return;
+      }
+      await refreshNestingPlans();
+    } catch (error) {
+      setNestingError(error instanceof Error ? error.message : "Failed to approve nesting plan.");
+    } finally {
+      setNestingLoading(false);
+    }
+  }
+
+  function parseSheetSizeInput(value?: string | null) {
+    const match = String(value ?? "").match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)/);
+    if (!match) return null;
+    return { width: Number(match[1]), height: Number(match[2]) };
+  }
+
+  async function runAdvancedNestingEngine() {
+    if (!workspaceId) return;
+    setNestingLoading(true);
+    setNestingError(null);
+    try {
+      const material = advancedNestMaterial.trim();
+      const thickness = Number(advancedNestThickness);
+      const candidateJobs = smartQueueJobs.filter((job) =>
+        job.material.trim().toLowerCase() === material.toLowerCase() &&
+        Math.abs(Number(job.thickness ?? 0) - thickness) < 0.001 &&
+        job.status !== "completed"
+      );
+      const parts = candidateJobs.flatMap((job) => {
+        const size = parseSheetSizeInput(job.sheetSize);
+        if (!size) return [];
+        return [{
+          jobId: job.id,
+          quoteId: job.quoteId ?? null,
+          partDnaId: job.partDnaId ?? null,
+          dxfFileId: job.dxfFilePath ?? null,
+          quantity: 1,
+          width: size.width,
+          height: size.height,
+          cutLength: job.estimatedCutLength,
+          pierceCount: job.estimatedPierceCount
+        }];
+      });
+      if (!parts.length) {
+        setNestingError("No queued parts with a usable Width x Height sheet size match these nesting settings.");
+        return;
+      }
+      const createRes = await apiFetch("/api/nesting/create", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          material,
+          thickness,
+          sheetWidth: Number(advancedNestSheetWidth),
+          sheetHeight: Number(advancedNestSheetHeight),
+          kerf: Number(advancedNestKerf),
+          border: Number(advancedNestBorder),
+          spacing: Number(advancedNestSpacing),
+          allowedRotations: [0, 90, 180, 270],
+          allowCommonLine: advancedNestAllowCommonLine,
+          allowCommonLineCutting: advancedNestAllowCommonLine,
+          allowMicroJoins: advancedNestEnableMicroJoins,
+          enableMicroJoins: advancedNestEnableMicroJoins,
+          leadInType: advancedNestLeadInType,
+          leadInLength: Number(advancedNestLeadInLength),
+          parts
+        })
+      });
+      const created = (await createRes.json().catch(() => null)) as { error?: string; plan?: AdvancedNestingPlanRecord } | null;
+      if (!createRes.ok || !created?.plan?.jobId) {
+        setNestingError(created?.error ?? "Failed to create advanced nesting job.");
+        return;
+      }
+      const optimizeRes = await apiFetch(`/api/nesting/${encodeURIComponent(String(created.plan.jobId))}/optimize`, { method: "POST" });
+      const optimized = (await optimizeRes.json().catch(() => null)) as { error?: string; plan?: AdvancedNestingPlanRecord } | null;
+      if (!optimizeRes.ok || !optimized?.plan) {
+        setNestingError(optimized?.error ?? "Failed to optimize advanced nesting job.");
+        return;
+      }
+      setAdvancedNestResult(optimized.plan);
+      await refreshBrainCenter();
+    } catch (error) {
+      setNestingError(error instanceof Error ? error.message : "Failed to run advanced nesting engine.");
+    } finally {
+      setNestingLoading(false);
+    }
+  }
+
+  async function exportAdvancedNestingDxf() {
+    if (!advancedNestResult?.jobId) return;
+    setNestingLoading(true);
+    setNestingError(null);
+    try {
+      const res = await apiFetch(`/api/nesting/${encodeURIComponent(String(advancedNestResult.jobId))}/export-dxf`, { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { error?: string; plan?: AdvancedNestingPlanRecord } | null;
+      if (!res.ok || !data?.plan) {
+        setNestingError(data?.error ?? "Failed to export nested DXF.");
+        return;
+      }
+      setAdvancedNestResult(data.plan);
+    } catch (error) {
+      setNestingError(error instanceof Error ? error.message : "Failed to export nested DXF.");
+    } finally {
+      setNestingLoading(false);
+    }
+  }
+
+  async function runNestingStudio(maxOptimizationMs = 10000) {
+    setNestingStudioLoading(true);
+    setNestingStudioError(null);
+    setNestingStudioExportPath(null);
+    setNestingStudioExport(null);
+    try {
+      const selectedOffcut = nestingStudioOffcuts.find((offcut) => offcut.id === nestingStudioSelectedOffcutId) ?? null;
+      const res = await apiFetch("/api/nesting/run", {
+        method: "POST",
+        body: JSON.stringify({
+          customerName: nestingStudioCustomer,
+          nestName: nestingStudioNestName,
+          sheet: {
+            id: selectedOffcut ? String(selectedOffcut.id) : undefined,
+            type: selectedOffcut ? "offcut" : "sheet",
+            width: selectedOffcut?.width ?? Number(nestingStudioSheetWidth),
+            height: selectedOffcut?.height ?? Number(nestingStudioSheetHeight),
+            kerf: Number(nestingStudioKerf),
+            spacing: Number(nestingStudioSpacing),
+            border: Number(nestingStudioBorder)
+          },
+          maxOptimizationMs
+        })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; result?: NestingStudioResult } | null;
+      if (!res.ok || !data?.result) {
+        setNestingStudioError(data?.error ?? "Failed to run nesting.");
+        return;
+      }
+      const sheetWidth = Math.max(1, Number(selectedOffcut?.width ?? nestingStudioSheetWidth) || 3000);
+      const sheetHeight = Math.max(1, Number(selectedOffcut?.height ?? nestingStudioSheetHeight) || 1500);
+      const nextResult = recalculateNestingStudioResult(
+        data.result,
+        sheetWidth,
+        sheetHeight,
+        Math.max(0, Number(nestingStudioBorder) || 0),
+        Math.max(0, Number(nestingStudioSpacing) || 0),
+        Math.max(0, Number(nestingStudioKerf) || 0),
+        nestingStudioCustomer
+      );
+      setNestingStudioResult(nextResult);
+      setNestingStudioSelectedPartId(nextResult.placements[0]?.partId ?? null);
+      void saveNestingStudioManualResult(nextResult);
+      if (selectedOffcut) void recordNestingStudioOffcutEvent("offcut_selected", selectedOffcut.id, nestingStudioOffcutRecommendation);
+    } catch (error) {
+      setNestingStudioError(error instanceof Error ? error.message : "Failed to run nesting.");
+    } finally {
+      setNestingStudioLoading(false);
+    }
+  }
+
+  async function loadNestingStudioOffcuts() {
+    try {
+      const res = await apiFetch("/api/nesting/offcuts");
+      const data = (await res.json().catch(() => null)) as { offcuts?: NestingOffcutRecord[] } | null;
+      if (res.ok) setNestingStudioOffcuts((data?.offcuts ?? []).filter((offcut) => offcut.status === "available"));
+    } catch {
+      setNestingStudioOffcuts([]);
+    }
+  }
+
+  function recommendNestingStudioOffcut() {
+    const footprint = getNestingStudioFootprint(nestingStudioResult);
+    const material = nestingStudioMaterial.trim().toLowerCase();
+    const thickness = Number(nestingStudioThickness);
+    if (!footprint.area || !material || !Number.isFinite(thickness)) {
+      setNestingStudioOffcutRecommendation(null);
+      return;
+    }
+    const recommendation = nestingStudioOffcuts
+      .filter((offcut) => offcut.status === "available")
+      .filter((offcut) => offcut.material.trim().toLowerCase() === material && Math.abs(Number(offcut.thickness) - thickness) < 0.001)
+      .map((offcut) => {
+        const fitsNormal = footprint.width <= offcut.width && footprint.height <= offcut.height;
+        const fitsRotated = footprint.height <= offcut.width && footprint.width <= offcut.height;
+        if (!fitsNormal && !fitsRotated) return null;
+        const usableArea = Math.max(1, Number(offcut.usableArea) || offcut.width * offcut.height);
+        return {
+          offcut,
+          rotatedFit: !fitsNormal && fitsRotated,
+          wastePercent: Number((Math.max(0, usableArea - footprint.area) / usableArea * 100).toFixed(2)),
+          estimatedSaving: Number((footprint.area * 0.00012).toFixed(2))
+        };
+      })
+      .filter((entry): entry is NestingStudioOffcutRecommendation => Boolean(entry))
+      .sort((a, b) => a.wastePercent - b.wastePercent)[0] ?? null;
+    setNestingStudioOffcutRecommendation(recommendation);
+    if (recommendation) void recordNestingStudioOffcutEvent("offcut_recommended", recommendation.offcut.id, recommendation);
+  }
+
+  async function recordNestingStudioOffcutEvent(eventType: "offcut_recommended" | "offcut_selected", offcutId: number, recommendation: NestingStudioOffcutRecommendation | null) {
+    try {
+      await apiFetch("/api/nesting/studio/offcut-event", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          eventType,
+          offcutId,
+          wastePercent: recommendation?.wastePercent ?? 0,
+          estimatedSaving: recommendation?.estimatedSaving ?? 0,
+          rotatedFit: recommendation?.rotatedFit ?? false
+        })
+      });
+    } catch {
+      // Recommendation events are advisory; do not interrupt nesting.
+    }
+  }
+
+  function selectNestingStudioOffcut(offcut: NestingOffcutRecord) {
+    setNestingStudioSelectedOffcutId(offcut.id);
+    setNestingStudioSheetWidth(String(offcut.width));
+    setNestingStudioSheetHeight(String(offcut.height));
+    void recordNestingStudioOffcutEvent("offcut_selected", offcut.id, nestingStudioOffcutRecommendation);
+  }
+
+  function getNestingStudioCanvasPoint(event: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = nestingStudioCanvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const sheetWidth = Math.max(1, Number(nestingStudioSheetWidth) || 3000);
+    const sheetHeight = Math.max(1, Number(nestingStudioSheetHeight) || 1500);
+    const scale = Math.min((canvas.width - 24) / sheetWidth, (canvas.height - 24) / sheetHeight);
+    const offsetX = (canvas.width - sheetWidth * scale) / 2;
+    const offsetY = (canvas.height - sheetHeight * scale) / 2;
+    const canvasX = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    const canvasY = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
+  }
+
+  function applyNestingStudioManualResult(result: NestingStudioResult) {
+    const next = recalculateNestingStudioResult(
+      result,
+      Math.max(1, Number(nestingStudioSheetWidth) || 3000),
+      Math.max(1, Number(nestingStudioSheetHeight) || 1500),
+      Math.max(0, Number(nestingStudioBorder) || 0),
+      Math.max(0, Number(nestingStudioSpacing) || 0),
+      Math.max(0, Number(nestingStudioKerf) || 0),
+      nestingStudioCustomer
+    );
+    setNestingStudioResult(next);
+    setNestingStudioExportPath(null);
+    void saveNestingStudioManualResult(next);
+  }
+
+  async function saveNestingStudioManualResult(result: NestingStudioResult) {
+    try {
+      await apiFetch("/api/nesting/studio/save", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, customerName: nestingStudioCustomer, selectedOffcutId: nestingStudioSelectedOffcutId, result })
+      });
+    } catch {
+      // Manual edits still remain on screen if the background save fails.
+    }
+  }
+
+  function moveNestingStudioPlacement(partId: string, nextX: number, nextY: number) {
+    if (!nestingStudioResult) return;
+    const grid = nestingStudioSnapToGrid ? 10 : 1;
+    const snappedX = Math.round(nextX / grid) * grid;
+    const snappedY = Math.round(nextY / grid) * grid;
+    const nextPlacements = nestingStudioResult.placements.map((placement) => {
+      if (placement.partId !== partId) return placement;
+      const dx = snappedX - placement.x;
+      const dy = snappedY - placement.y;
+      return {
+        ...placement,
+        x: snappedX,
+        y: snappedY,
+        polygon: placement.polygon.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+        microJoins: placement.microJoins.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+        leadIn: {
+          start: { x: placement.leadIn.start.x + dx, y: placement.leadIn.start.y + dy },
+          end: { x: placement.leadIn.end.x + dx, y: placement.leadIn.end.y + dy }
+        }
+      };
+    });
+    applyNestingStudioManualResult({ ...nestingStudioResult, placements: nextPlacements });
+  }
+
+  function rotateSelectedNestingStudioPlacement() {
+    if (!nestingStudioResult || !nestingStudioSelectedPartId) return;
+    const nextPlacements = nestingStudioResult.placements.map((placement) => {
+      if (placement.partId !== nestingStudioSelectedPartId) return placement;
+      const box = nestingStudioBounds(placement.polygon);
+      const rotated = placement.polygon.map((point) => ({
+        x: placement.x + (box.height - (point.y - box.minY)),
+        y: placement.y + (point.x - box.minX)
+      }));
+      const nextBox = nestingStudioBounds(rotated);
+      const dx = placement.x - nextBox.minX;
+      const dy = placement.y - nextBox.minY;
+      const polygon = rotated.map((point) => ({ x: point.x + dx, y: point.y + dy }));
+      const finalBox = nestingStudioBounds(polygon);
+      return {
+        ...placement,
+        rotation: (placement.rotation + 90) % 360,
+        polygon,
+        microJoins: [
+          { x: finalBox.minX + finalBox.width / 2, y: finalBox.minY },
+          { x: finalBox.minX + finalBox.width / 2, y: finalBox.maxY }
+        ],
+        leadIn: { start: { x: finalBox.minX - 4, y: finalBox.minY + 4 }, end: { x: finalBox.minX, y: finalBox.minY + 4 } }
+      };
+    });
+    applyNestingStudioManualResult({ ...nestingStudioResult, placements: nextPlacements });
+  }
+
+  function deleteSelectedNestingStudioPlacement() {
+    if (!nestingStudioResult || !nestingStudioSelectedPartId) return;
+    const selected = nestingStudioResult.placements.find((placement) => placement.partId === nestingStudioSelectedPartId);
+    const nextPlacements = nestingStudioResult.placements.filter((placement) => placement.partId !== nestingStudioSelectedPartId);
+    const nextUnplaced = selected
+      ? [...nestingStudioResult.unplaced, { id: selected.partId, name: selected.name, quantity: 1 }]
+      : nestingStudioResult.unplaced;
+    setNestingStudioSelectedPartId(nextPlacements[0]?.partId ?? null);
+    applyNestingStudioManualResult({ ...nestingStudioResult, placements: nextPlacements, unplaced: nextUnplaced });
+  }
+
+  function handleNestingStudioCanvasMouseDown(event: React.MouseEvent<HTMLCanvasElement>) {
+    if (!nestingStudioResult) return;
+    const point = getNestingStudioCanvasPoint(event);
+    if (!point) return;
+    const selected = [...nestingStudioResult.placements].reverse().find((placement) => {
+      const box = nestingStudioBounds(placement.polygon);
+      return point.x >= box.minX && point.x <= box.maxX && point.y >= box.minY && point.y <= box.maxY;
+    });
+    setNestingStudioSelectedPartId(selected?.partId ?? null);
+    if (selected) nestingStudioDragRef.current = { partId: selected.partId, offsetX: point.x - selected.x, offsetY: point.y - selected.y };
+  }
+
+  function handleNestingStudioCanvasMouseMove(event: React.MouseEvent<HTMLCanvasElement>) {
+    const drag = nestingStudioDragRef.current;
+    if (!drag) return;
+    const point = getNestingStudioCanvasPoint(event);
+    if (!point) return;
+    moveNestingStudioPlacement(drag.partId, point.x - drag.offsetX, point.y - drag.offsetY);
+  }
+
+  function stopNestingStudioDrag() {
+    nestingStudioDragRef.current = null;
+  }
+
+  async function exportNestingStudioDxf() {
+    if (!nestingStudioResult?.dxf) return;
+    setNestingStudioLoading(true);
+    setNestingStudioError(null);
+    try {
+      const res = await apiFetch("/api/nesting/export", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          customerName: nestingStudioCustomer,
+          nestName: nestingStudioNestName,
+          dxf: nestingStudioResult.dxf
+        })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; exportPath?: string; exportFolder?: string; exportFileName?: string } | null;
+      if (!res.ok || !data?.exportPath) {
+        setNestingStudioError(data?.error ?? "Failed to export DXF.");
+        return;
+      }
+      setNestingStudioExportPath(data.exportPath);
+      setNestingStudioExport({
+        exportPath: data.exportPath,
+        exportFolder: data.exportFolder ?? data.exportPath.split("/").slice(0, -1).join("/"),
+        exportFileName: data.exportFileName ?? data.exportPath.split("/").pop() ?? "nesting.dxf"
+      });
+    } catch (error) {
+      setNestingStudioError(error instanceof Error ? error.message : "Failed to export DXF.");
+    } finally {
+      setNestingStudioLoading(false);
+    }
+  }
+
+  async function openNestingStudioExportFolder() {
+    if (!nestingStudioExport?.exportFolder) return;
+    const result = await window.desktopShell?.openPath?.(nestingStudioExport.exportFolder);
+    if (result && !result.ok) setNestingStudioError(result.error ?? "Failed to open export folder.");
+  }
+
+  function calculateNestingStudioLeftover() {
+    if (!nestingStudioResult?.placements.length) return null;
+    const sheetWidth = Math.max(1, Number(nestingStudioSheetWidth) || 3000);
+    const sheetHeight = Math.max(1, Number(nestingStudioSheetHeight) || 1500);
+    const border = Math.max(0, Number(nestingStudioBorder) || 0);
+    const used = nestingStudioBounds(nestingStudioResult.placements.flatMap((placement) => placement.polygon));
+    const right = { width: Math.max(0, sheetWidth - used.maxX - border), height: Math.max(0, sheetHeight - border * 2) };
+    const top = { width: Math.max(0, sheetWidth - border * 2), height: Math.max(0, sheetHeight - used.maxY - border) };
+    const best = right.width * right.height >= top.width * top.height ? right : top;
+    if (best.width < 50 || best.height < 50) return null;
+    return best;
+  }
+
+  async function createNestingStudioLeftoverOffcut() {
+    const leftover = calculateNestingStudioLeftover();
+    if (!leftover) {
+      setNestingStudioError("No usable leftover offcut found.");
+      return;
+    }
+    setNestingStudioLoading(true);
+    setNestingStudioError(null);
+    try {
+      const shapeJson = JSON.stringify({ type: "rect", width: leftover.width, height: leftover.height });
+      const previewJson = JSON.stringify({
+        outline: [{ x: 0, y: 0 }, { x: leftover.width, y: 0 }, { x: leftover.width, y: leftover.height }, { x: 0, y: leftover.height }],
+        cutouts: [],
+        width: leftover.width,
+        height: leftover.height
+      });
+      const res = await apiFetch("/api/nesting/studio/create-leftover-offcut", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId,
+          material: nestingStudioMaterial,
+          thickness: Number(nestingStudioThickness),
+          width: leftover.width,
+          height: leftover.height,
+          sourceJobId: nestingStudioExport?.exportFileName ?? "nesting-studio",
+          sourceCustomerId: nestingStudioCustomer,
+          shapeJson,
+          previewJson
+        })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; offcut?: NestingOffcutRecord } | null;
+      if (!res.ok || !data?.offcut) {
+        setNestingStudioError(data?.error ?? "Failed to create leftover offcut.");
+        return;
+      }
+      await loadNestingStudioOffcuts();
+    } catch (error) {
+      setNestingStudioError(error instanceof Error ? error.message : "Failed to create leftover offcut.");
+    } finally {
+      setNestingStudioLoading(false);
+    }
+  }
+
+  async function refreshNestingWorkspaceData(activeId = nestingWorkspaceActive?.id ?? null) {
+    if (!workspaceId) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const loadJson = async <T,>(request: Promise<Response>, fallback: T) => {
+        try {
+          const response = await request;
+          const data = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+          return response.ok ? { data: data ?? fallback, error: null } : { data: fallback, error: data?.error ?? "Request failed" };
+        } catch (error) {
+          return { data: fallback, error: error instanceof Error ? error.message : "Request failed" };
+        }
+      };
+      const [workspacesResult, offcutsResult, historyResult] = await Promise.all([
+        loadJson<{ workspaces?: NestingWorkspaceRecord[] }>(apiFetch(`/api/nesting/workspaces?workspaceId=${encodeURIComponent(workspaceId)}`), { workspaces: [] }),
+        loadJson<{ offcuts?: NestingOffcutRecord[] }>(apiFetch("/api/nesting/offcuts"), { offcuts: [] }),
+        loadJson<{ history?: NestingWorkspaceRecord[] }>(apiFetch(`/api/nesting/history?workspaceId=${encodeURIComponent(workspaceId)}`), { history: [] })
+      ]);
+      const loadErrors = [workspacesResult.error, offcutsResult.error, historyResult.error].filter((value): value is string => Boolean(value));
+      const nextWorkspaces = workspacesResult.data.workspaces ?? [];
+      setNestingWorkspaceItems(nextWorkspaces);
+      setNestingWorkspaceOffcuts(offcutsResult.data.offcuts ?? []);
+      setNestingWorkspaceHistory(historyResult.data.history ?? []);
+      if (loadErrors.length) setNestingWorkspaceError(loadErrors.join(" · "));
+      const selected = nextWorkspaces.find((entry) => entry.id === activeId) ?? nextWorkspaces[0] ?? null;
+      setNestingWorkspaceActive(selected);
+      if (selected) {
+        setNestingWorkspaceCustomerName(selected.customerName);
+        setNestingWorkspaceCustomerId(selected.customerId ?? "");
+        setNestingWorkspaceNestName(selected.nestName);
+        setNestingWorkspaceMaterial(selected.material);
+        setNestingWorkspaceThickness(String(selected.thickness));
+        setNestingWorkspaceSheetWidth(String(selected.sheetWidth));
+        setNestingWorkspaceSheetHeight(String(selected.sheetHeight));
+        setNestingWorkspaceBorder(String(selected.border));
+        setNestingWorkspaceKerf(String(selected.kerf));
+        setNestingWorkspaceSpacing(String(selected.spacing));
+        setNestingWorkspaceAllowRotation(selected.allowRotation);
+        setNestingWorkspaceAllowCommonLine(selected.allowCommonLine);
+        setNestingWorkspaceEnableMicroJoins(selected.enableMicroJoins);
+        setNestingWorkspaceLeadInType(selected.leadInType);
+        setNestingWorkspaceLeadInLength(String(selected.leadInLength));
+      }
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to load nesting workspace.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  function buildNestingWorkspacePayload() {
+    const selectedCustomer = customers.find((customer) => customer.id === nestingWorkspaceCustomerId);
+    return {
+      workspaceId,
+      customerId: selectedCustomer?.id ?? (nestingWorkspaceCustomerId || null),
+      customerName: selectedCustomer?.name ?? nestingWorkspaceCustomerName,
+      nestName: nestingWorkspaceNestName,
+      material: nestingWorkspaceMaterial,
+      thickness: Number(nestingWorkspaceThickness),
+      sheetWidth: Number(nestingWorkspaceSheetWidth),
+      sheetHeight: Number(nestingWorkspaceSheetHeight),
+      border: Number(nestingWorkspaceBorder),
+      kerf: Number(nestingWorkspaceKerf),
+      spacing: Number(nestingWorkspaceSpacing),
+      allowRotation: nestingWorkspaceAllowRotation,
+      allowCommonLine: nestingWorkspaceAllowCommonLine,
+      enableMicroJoins: nestingWorkspaceEnableMicroJoins,
+      leadInType: nestingWorkspaceLeadInType,
+      leadInLength: Number(nestingWorkspaceLeadInLength)
+    };
+  }
+
+  async function ensureNestingWorkspace(): Promise<NestingWorkspaceRecord | null> {
+    if (nestingWorkspaceActive) return nestingWorkspaceActive;
+    if (!workspaceId) return null;
+    const res = await apiFetch("/api/nesting/workspaces", {
+      method: "POST",
+      body: JSON.stringify(buildNestingWorkspacePayload())
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+    if (!res.ok || !data?.workspace) {
+      setNestingWorkspaceError(data?.error ?? "Failed to create nesting workspace.");
+      return null;
+    }
+    setNestingWorkspaceActive(data.workspace);
+    await refreshNestingWorkspaceData(data.workspace.id);
+    return data.workspace;
+  }
+
+  async function saveNestingWorkspaceSettings() {
+    if (!workspaceId) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    const payload = buildNestingWorkspacePayload();
+    try {
+      const res = await apiFetch(nestingWorkspaceActive ? `/api/nesting/workspaces/${nestingWorkspaceActive.id}` : "/api/nesting/workspaces", {
+        method: nestingWorkspaceActive ? "PATCH" : "POST",
+        body: JSON.stringify(payload)
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      if (!res.ok || !data?.workspace) {
+        setNestingWorkspaceError(data?.error ?? "Failed to save nesting workspace.");
+        return;
+      }
+      await refreshNestingWorkspaceData(data.workspace.id);
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to save nesting workspace.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function addDxfToNestingWorkspace(file: File | null) {
+    if (!file) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const workspace = await ensureNestingWorkspace();
+      if (!workspace) return;
+      const rawDxf = await file.text();
+      const res = await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+        method: "POST",
+        body: JSON.stringify({ fileName: file.name, dxfFileId: file.name, rawDxf, quantity: 1 })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      if (!res.ok) {
+        setNestingWorkspaceError(data?.error ?? "Failed to add DXF.");
+        return;
+      }
+      await refreshNestingWorkspaceData(workspace.id);
+      await recommendNestingWorkspaceOffcuts(workspace);
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to add DXF.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function addDxfToNestingWorkspaceFromDesktopPicker() {
+    if (!window.desktopShell?.pickFile) {
+      setNestingWorkspaceError("Desktop picker is unavailable. Use Choose file or restart the desktop app.");
+      return;
+    }
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const result = await window.desktopShell.pickFile({ title: "Select DXF file", extensions: ["dxf"] });
+      if (!result.ok) {
+        if (!result.canceled) setNestingWorkspaceError(`DXF import failed. ${result.error ?? "Unknown error"}`);
+        return;
+      }
+      const workspace = await ensureNestingWorkspace();
+      if (!workspace) return;
+      const rawDxf = decodeDxfArrayBuffer(decodeBase64ToArrayBuffer(result.contentBase64));
+      const res = await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+        method: "POST",
+        body: JSON.stringify({ fileName: result.fileName, dxfFileId: result.fileName, rawDxf, quantity: 1 })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      if (!res.ok) {
+        setNestingWorkspaceError(data?.error ?? "Failed to add DXF.");
+        return;
+      }
+      await refreshNestingWorkspaceData(workspace.id);
+      await recommendNestingWorkspaceOffcuts(workspace);
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to add DXF.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function updateNestingWorkspacePartQuantity(partId: number, quantity: number) {
+    if (!nestingWorkspaceActive) return;
+    const nextQuantity = Math.max(1, Math.round(Number(quantity) || 1));
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/parts/${partId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ quantity: nextQuantity })
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      if (!res.ok || !data?.workspace) {
+        setNestingWorkspaceError(data?.error ?? "Failed to update quantity.");
+        return;
+      }
+      setNestingWorkspaceActive(data.workspace);
+      await refreshNestingWorkspaceData(data.workspace.id);
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to update quantity.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function addJobToNestingWorkspace(job: JobRecord | null) {
+    if (!job) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    const workspace = await ensureNestingWorkspace();
+    if (!workspace) {
+      setNestingWorkspaceLoading(false);
+      return;
+    }
+    const part = job.jobDxfParts?.[0];
+    try {
+      await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+        method: "POST",
+        body: JSON.stringify({
+          jobId: job.id,
+          fileName: part?.name ?? job.title,
+          quantity: part?.quantity ?? 1,
+          width: part?.widthMm ?? 100,
+          height: part?.heightMm ?? 100,
+          cutLength: part?.cutLengthMm ?? 400,
+          pierceCount: part?.pierceCount ?? 1,
+          partDnaId: part?.partDnaId ?? null
+        })
+      });
+      await refreshNestingWorkspaceData(workspace.id);
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function addQuoteToNestingWorkspace(quote: QuoteRecord | null) {
+    if (!quote) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    const workspace = await ensureNestingWorkspace();
+    if (!workspace) {
+      setNestingWorkspaceLoading(false);
+      return;
+    }
+    const part = Object.values(quote.sections ?? {}).flatMap((section) => section.parts ?? [])[0];
+    try {
+      await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+        method: "POST",
+        body: JSON.stringify({
+          quoteId: quote.id,
+          fileName: part?.name ?? quote.title,
+          quantity: part?.quantity ?? 1,
+          width: part?.lengthMm ?? 100,
+          height: part?.widthMm ?? 100,
+          cutLength: ((part?.lengthMm ?? 100) + (part?.widthMm ?? 100)) * 2,
+          pierceCount: 1,
+          partDnaId: part?.partDnaId ?? null
+        })
+      });
+      await refreshNestingWorkspaceData(workspace.id);
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function recommendNestingWorkspaceOffcuts(workspaceOverride?: NestingWorkspaceRecord) {
+    const workspace = workspaceOverride ?? nestingWorkspaceActive;
+    if (!workspace) return;
+    const res = await apiFetch("/api/nesting/offcuts/recommend", {
+      method: "POST",
+      body: JSON.stringify({
+        workspaceId: workspace.id,
+        material: workspace.material,
+        thickness: workspace.thickness
+      })
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string; best?: NestingOffcutRecommendation | null } | null;
+    if (!res.ok) {
+      setNestingWorkspaceError(data?.error ?? "Failed to recommend offcuts.");
+      return;
+    }
+    setNestingWorkspaceRecommendation(data?.best ?? null);
+  }
+
+  async function useNestingWorkspaceOffcut(offcut: NestingOffcutRecord | NestingOffcutRecommendation) {
+    if (!nestingWorkspaceActive) return;
+    const width = Number(offcut.width);
+    const height = Number(offcut.height);
+    const sourceId = "offcutId" in offcut ? offcut.offcutId : offcut.id;
+    const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sourceType: "offcut", sourceId, sheetWidth: width, sheetHeight: height })
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+    if (!res.ok || !data?.workspace) {
+      setNestingWorkspaceError(data?.error ?? "Failed to use offcut.");
+      return;
+    }
+    await refreshNestingWorkspaceData(data.workspace.id);
+  }
+
+  async function runNestingWorkspaceAutoNest() {
+    if (!nestingWorkspaceActive) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/auto-nest`, { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      if (!res.ok) {
+        setNestingWorkspaceError(data?.error ?? "Failed to auto nest.");
+        return;
+      }
+      await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
+      await refreshBrainCenter();
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to auto nest.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function moveNestingWorkspacePlacement(dx: number, dy: number, rotationDelta = 0) {
+    if (!nestingWorkspaceActive || nestingWorkspaceSelectedPlacementId === null) return;
+    const placements = nestingWorkspaceActive.placements.map((placement) =>
+      placement.id === nestingWorkspaceSelectedPlacementId
+        ? { ...placement, x: Math.max(0, placement.x + dx), y: Math.max(0, placement.y + dy), rotation: (placement.rotation + rotationDelta + 360) % 360, isManual: true }
+        : placement
+    );
+    const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/placements`, {
+      method: "PATCH",
+      body: JSON.stringify({ placements })
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+    if (!res.ok) {
+      setNestingWorkspaceError(data?.error ?? "Failed to save placement.");
+      return;
+    }
+    await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
+  }
+
+  async function exportNestingWorkspaceDxf() {
+    if (!nestingWorkspaceActive) return;
+    setNestingWorkspaceLoading(true);
+    setNestingWorkspaceError(null);
+    try {
+      const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/export-dxf`, { method: "POST" });
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord; exportPath?: string } | null;
+      if (!res.ok) {
+        setNestingWorkspaceError(data?.error ?? "Failed to export nested DXF.");
+        return;
+      }
+      await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
+    } catch (error) {
+      setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to export nested DXF.");
+    } finally {
+      setNestingWorkspaceLoading(false);
+    }
+  }
+
+  async function createNestingWorkspaceOffcuts() {
+    if (!nestingWorkspaceActive) return;
+    const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/create-offcuts`, { method: "POST" });
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (!res.ok) {
+      setNestingWorkspaceError(data?.error ?? "Failed to create offcuts.");
+      return;
+    }
+    await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
+  }
+
+  async function runDxfErrorCheck() {
+    if (!workspaceId) return;
+    if (!dxfErrorFile) {
+      setDxfErrorError("Choose a DXF file first.");
+      return;
+    }
+    setDxfErrorLoading(true);
+    setDxfErrorError(null);
+    try {
+      const formData = new FormData();
+      formData.append("workspaceId", workspaceId);
+      formData.append("thickness", dxfErrorThickness);
+      formData.append("file", dxfErrorFile);
+      const res = await apiFetch("/api/brain/dxf/check", {
+        method: "POST",
+        body: formData
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; result?: DxfErrorCheckResult } | null;
+      if (!res.ok) {
+        setDxfErrorError(data?.error ?? "Failed to check DXF.");
+        return;
+      }
+      setDxfErrorResult(data?.result ?? null);
+    } catch (error) {
+      setDxfErrorError(error instanceof Error ? error.message : "Failed to check DXF.");
+    } finally {
+      setDxfErrorLoading(false);
+    }
+  }
+
+  async function pickDxfErrorFileFromDesktop() {
+    if (!window.desktopShell?.pickFile) {
+      setDxfErrorError("Desktop picker unavailable. Use file upload.");
+      return;
+    }
+    try {
+      const result = await window.desktopShell.pickFile({ title: "Select DXF file", extensions: ["dxf"] });
+      if (!result.ok) {
+        if (!result.canceled) setDxfErrorError(`DXF import failed. ${result.error ?? "Unknown error"}`);
+        return;
+      }
+      setDxfErrorFile(new File([decodeBase64ToArrayBuffer(result.contentBase64)], result.fileName, { type: "application/dxf" }));
+      setDxfErrorError(null);
+    } catch (error) {
+      setDxfErrorError(error instanceof Error ? error.message : "DXF import failed.");
+    }
+  }
+
+  async function askProductionAssistant(questionInput?: string) {
+    if (!workspaceId) return;
+    const question = (questionInput ?? productionAssistantInput).trim();
+    if (!question) return;
+    const askedAt = new Date().toISOString();
+    setProductionAssistantLoading(true);
+    setProductionAssistantError(null);
+    setProductionAssistantMessages((messages) => [...messages, { role: "user", text: question, at: askedAt }]);
+    if (!questionInput) setProductionAssistantInput("");
+    try {
+      const res = await apiFetch("/api/brain/assistant/ask", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, question })
+      });
+      const data = (await res.json().catch(() => null)) as ({ error?: string } & Partial<ProductionAssistantResponse>) | null;
+      if (!res.ok || !data?.answer) {
+        setProductionAssistantError(data?.error ?? "Failed to get Production Assistant answer.");
+        return;
+      }
+      const response: ProductionAssistantResponse = {
+        answer: data.answer,
+        sourceModules: data.sourceModules ?? [],
+        recommendations: data.recommendations ?? [],
+        suggestedActions: data.suggestedActions ?? []
+      };
+      setProductionAssistantMessages((messages) => [
+        ...messages,
+        {
+          role: "assistant",
+          text: response.answer,
+          at: new Date().toISOString(),
+          response
+        }
+      ]);
+    } catch (error) {
+      setProductionAssistantError(error instanceof Error ? error.message : "Failed to get Production Assistant answer.");
+    } finally {
+      setProductionAssistantLoading(false);
+    }
+  }
+
+  async function handleProductionAssistantAction(action: ProductionAssistantAction) {
+    if (action.actionType === "open_ai_queue") {
+      setViewMode("brain_center");
+      return;
+    }
+    if (action.actionType === "open_material_prediction" || action.actionType === "open_stock") {
+      setViewMode("brain_center");
+      return;
+    }
+    if (action.actionType === "open_profit_intelligence") {
+      setViewMode("brain_center");
+      return;
+    }
+    if (action.actionType === "open_dxf_errors") {
+      setViewMode("brain_center");
+      return;
+    }
+    if (action.actionType === "open_part_dna") {
+      setViewMode("part_dna");
+      return;
+    }
+    if (action.actionType === "open_quotes") {
+      setViewMode("quotes");
+      return;
+    }
+    if (action.actionType === "refresh") {
+      const lastUserQuestion = [...productionAssistantMessages].reverse().find((entry) => entry.role === "user")?.text ?? "";
+      if (lastUserQuestion) {
+        await askProductionAssistant(lastUserQuestion);
+      }
     }
   }
 
@@ -8214,6 +10828,25 @@ function App() {
     );
   }
 
+  async function importPdfFromDesktopPicker() {
+    if (!window.desktopShell?.pickFile) {
+      setPdfReaderStatus("Desktop picker is unavailable in browser mode. Use file upload or run the desktop app.");
+      return;
+    }
+    try {
+      const result = await window.desktopShell.pickFile({ title: "Select PDF drawing", extensions: ["pdf"] });
+      if (!result.ok) {
+        setPdfReaderStatus(result.canceled ? "PDF import canceled." : `PDF import failed. ${result.error ?? "Unknown error"}`);
+        return;
+      }
+      const file = new File([decodeBase64ToArrayBuffer(result.contentBase64)], result.fileName, { type: "application/pdf" });
+      await loadPdfReaderFiles([file]);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setPdfReaderStatus(`PDF import failed. ${detail}`);
+    }
+  }
+
   function togglePdfReaderPart(partId: string) {
     setPdfReaderSelectedPartIds((ids) => (ids.includes(partId) ? ids.filter((id) => id !== partId) : [...ids, partId]));
   }
@@ -8867,8 +11500,9 @@ function App() {
     const segments: DxfSegment[] = [];
 
     for (let i = 0; i < quantity; i += 1) {
-      segments.push(
-        ...buildPerforationSegments({
+      appendDxfSegments(
+        segments,
+        buildPerforationSegments({
           plateWidth,
           plateHeight,
           holeType: perfHoleType,
@@ -8944,8 +11578,9 @@ function App() {
       const segments: DxfSegment[] = [];
 
       for (let i = 0; i < quantity; i += 1) {
-        segments.push(
-          ...buildPerforationSegments({
+        appendDxfSegments(
+          segments,
+          buildPerforationSegments({
             plateWidth,
             plateHeight,
             holeType: perfHoleType,
@@ -8996,7 +11631,11 @@ function App() {
         }
         return;
       }
-      setJobDxfStatus(`Exported perforation DXF to ${result.filePath}.`);
+      setJobDxfStatus(
+        result.autoSavedToOneDrive
+          ? `Exported perforation DXF to OneDrive: ${result.filePath}.`
+          : `Exported perforation DXF to ${result.filePath}.`
+      );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       setJobDxfStatus(`Failed to export perforation DXF. ${detail}`);
@@ -9084,7 +11723,11 @@ function App() {
       }
       return;
     }
-    setJobDxfStatus(`Exported cut DXF to ${result.filePath}.`);
+    setJobDxfStatus(
+      result.autoSavedToOneDrive
+        ? `Exported cut DXF to OneDrive: ${result.filePath}.`
+        : `Exported cut DXF to ${result.filePath}.`
+    );
   }
 
   function toggleJobDxfLayer(layer: string) {
@@ -9258,6 +11901,25 @@ function App() {
             : part
         )
       );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      window.alert(`Failed to read DXF file. ${detail}`);
+    }
+  }
+
+  async function uploadQuotePartDxfFromDesktopPicker(index: number) {
+    if (!window.desktopShell?.pickFile) {
+      window.alert("Desktop picker unavailable. Use file upload.");
+      return;
+    }
+    try {
+      const result = await window.desktopShell.pickFile({ title: "Select DXF file", extensions: ["dxf"] });
+      if (!result.ok) {
+        if (!result.canceled) window.alert(`DXF import failed. ${result.error ?? "Unknown error"}`);
+        return;
+      }
+      const file = new File([decodeBase64ToArrayBuffer(result.contentBase64)], result.fileName, { type: "application/dxf" });
+      await uploadQuotePartDxf(index, file);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       window.alert(`Failed to read DXF file. ${detail}`);
@@ -9993,6 +12655,22 @@ function App() {
     } finally {
       setEmailSettingsSaving(false);
     }
+  }
+
+  function applyGmailEmailPreset() {
+    setEmailSettings((current) => {
+      const accountEmail = current.fromEmail.trim() || current.smtpUser.trim() || current.imapUser.trim();
+      return {
+        ...current,
+        ...GMAIL_EMAIL_PRESET,
+        smtpUser: accountEmail || current.smtpUser,
+        imapUser: accountEmail || current.imapUser,
+        fromEmail: accountEmail || current.fromEmail,
+        imapPass: current.imapPass || current.smtpPass
+      };
+    });
+    setEmailStatus("Gmail settings filled. Enter your Gmail address and Gmail app password, then Save or Link Inbox.");
+    setEmailImapLinkStatus("Gmail uses an app password. In Google Account, enable 2-Step Verification, create an App password, and paste it into both password fields.");
   }
 
   async function linkInboxWithImapSettings() {
@@ -11671,10 +14349,7 @@ function App() {
   }
 
   function send() {
-    const t = text.trim();
-    if (!t) return;
-    socket.emit("message", { roomId, text: t, user: chatUser });
-    setText("");
+    void sendSupportMessage();
   }
 
   function formatPeriodEnd(seconds: number | null) {
@@ -11990,6 +14665,19 @@ function App() {
     }))
     .filter((group) => group.jobs.length > 0 || (!smartQueueQuery && smartQueueFilter === "all"));
   const selectedSmartQueueJob = smartQueueJobs.find((job) => job.id === smartQueueSelectedJobId) ?? null;
+  const activeLeadTimeJob = selectedSmartQueueJob ?? smartQueueJobs[0] ?? null;
+  const activeSheetOptimizerJob = activeLeadTimeJob;
+  useEffect(() => {
+    if (offlineBootMode || !workspaceId || viewMode !== "sheet_optimizer" || workspaceLocked) return;
+    if (smartQueueJobs.length === 0) {
+      void refreshSmartQueue();
+      return;
+    }
+    if (activeSheetOptimizerJob) {
+      setSheetOptimizerMaterial(activeSheetOptimizerJob.material || "Mild Steel");
+      setSheetOptimizerThickness(String(activeSheetOptimizerJob.thickness ?? 1.5));
+    }
+  }, [offlineBootMode, workspaceId, viewMode, workspaceLocked, smartQueueJobs, activeSheetOptimizerJob]);
   const smartQueueStatusColors: Record<SmartQueueJob["status"], string> = {
     pending: "#94a3b8",
     ready: "#38bdf8",
@@ -12004,27 +14692,33 @@ function App() {
     urgent: "#f43f5e"
   };
   const stockQuery = stockSearch.trim().toLowerCase();
+  const stockLowWarningKeys = new Set(stockWarnings.map((warning) => `${warning.material}::${warning.thickness}`));
   const filteredStockSheets = stockSheets.filter((sheet) => {
+    if (stockViewFilter === "offcuts_only") return false;
     const matchesSearch =
       !stockQuery ||
       sheet.material.toLowerCase().includes(stockQuery) ||
       `${sheet.width}x${sheet.height}`.includes(stockQuery) ||
+      `${sheet.width} x ${sheet.height}`.includes(stockQuery) ||
+      String(sheet.quantity).includes(stockQuery) ||
+      (sheet.supplier ?? "").toLowerCase().includes(stockQuery) ||
       (sheet.location ?? "").toLowerCase().includes(stockQuery);
     const matchesMaterial = !stockMaterialFilter || sheet.material === stockMaterialFilter;
     const matchesThickness = !stockThicknessFilter || String(sheet.thickness) === stockThicknessFilter;
     const matchesStatus =
       stockViewFilter === "all" ||
-      stockViewFilter === "low_stock" ||
-      stockViewFilter === "offcuts_only" ||
+      (stockViewFilter === "low_stock" && stockLowWarningKeys.has(`${sheet.material}::${sheet.thickness}`)) ||
       (stockViewFilter === "available" && sheet.status === "available") ||
       (stockViewFilter === "reserved" && sheet.status === "reserved");
     return matchesSearch && matchesMaterial && matchesThickness && matchesStatus;
   });
   const filteredStockOffcuts = stockOffcuts.filter((offcut) => {
+    if (stockViewFilter === "low_stock") return false;
     const matchesSearch =
       !stockQuery ||
       offcut.material.toLowerCase().includes(stockQuery) ||
       `${offcut.width}x${offcut.height}`.includes(stockQuery) ||
+      `${offcut.width} x ${offcut.height}`.includes(stockQuery) ||
       (offcut.location ?? "").toLowerCase().includes(stockQuery);
     const matchesMaterial = !stockMaterialFilter || offcut.material === stockMaterialFilter;
     const matchesThickness = !stockThicknessFilter || String(offcut.thickness) === stockThicknessFilter;
@@ -12111,6 +14805,22 @@ function App() {
   const densityByMaterial = Object.fromEntries(
     materials.map((material) => [material.name, material.density])
   ) as Record<string, number>;
+  function calculatePlateWeightKg(material: string, thicknessMm: number, widthMm: number, heightMm: number, quantity = 1) {
+    const density = densityByMaterial[material] ?? densityByMaterial["Mild Steel"] ?? 7850;
+    const volumeM3 = (Math.max(0, widthMm) * Math.max(0, heightMm) * Math.max(0, thicknessMm)) / 1_000_000_000;
+    return volumeM3 * density * Math.max(0, quantity);
+  }
+  const visibleRackWeights = Array.from(
+    [...filteredStockSheets, ...filteredStockOffcuts].reduce((map, item) => {
+      const location = item.location?.trim() || "No location";
+      const quantity = "quantity" in item ? item.quantity : 1;
+      const current = map.get(location) ?? { location, totalKg: 0, itemCount: 0 };
+      current.totalKg += calculatePlateWeightKg(item.material, item.thickness, item.width, item.height, quantity);
+      current.itemCount += 1;
+      map.set(location, current);
+      return map;
+    }, new Map<string, { location: string; totalKg: number; itemCount: number }>())
+  ).sort((a, b) => b.totalKg - a.totalKg);
   const rateByMaterial = Object.fromEntries(
     materials.map((material) => [material.name, material.ratePerKg])
   ) as Record<string, number>;
@@ -12700,18 +15410,6 @@ function App() {
             >
               {authMode === "login" ? "Sign in" : "Create account"}
             </Button>
-            <Button
-              onClick={() => {
-                enterOfflineBootMode("Opened app without API. Retry with the backend running when you need sync, login, or saved data.");
-              }}
-              disabled={authBusy}
-              variant="secondary"
-            >
-              Open App Without API
-            </Button>
-            <div style={{ fontSize: 11, color: "rgba(209, 213, 219, 0.72)", lineHeight: 1.45 }}>
-              This starts the app shell only. Login, sync, quotes, jobs, and backend tools will stay unavailable until the local API starts.
-            </div>
             {authMode === "login" ? (
               <>
                 {renderSubscriptionPaymentDetails(loginPaymentReference)}
@@ -12750,7 +15448,7 @@ function App() {
         style={{
           padding: "16px 24px 14px",
           background: "linear-gradient(180deg, rgba(22, 26, 33, 0.98) 0%, rgba(24, 28, 34, 0.98) 100%)",
-          borderBottom: `1px solid ${UI.colors.border}`
+          borderBottom: "1px solid transparent"
         }}
       >
         <BrandWordmark compact subtitle={activeServer?.name ?? "Quotes Jobs Invoices"} />
@@ -12764,7 +15462,7 @@ function App() {
           display: "flex",
           flexDirection: "column",
           gap: 12,
-          borderRight: `1px solid ${UI.colors.border}`
+          borderRight: "1px solid transparent"
         }}
       >
         {visibleSidebarItems.map((item) => (
@@ -12863,49 +15561,6 @@ function App() {
             + Add Role
           </button>
         </div>
-
-        <div style={{ opacity: 0.9, marginBottom: 8 }}>Files</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-          {files.slice(0, 6).map((file) => (
-            <div key={file.id} style={{ fontSize: 12, opacity: 0.9 }}>
-              {file.name}
-            </div>
-          ))}
-          <button
-            onClick={createFile}
-            style={{
-              textAlign: "left",
-              padding: "6px 8px",
-              borderRadius: 6,
-              border: "1px dashed #444",
-              background: "transparent",
-              color: "#9ca3af",
-              cursor: "pointer"
-            }}
-          >
-            + Add File
-          </button>
-        </div>
-
-        <div style={{ opacity: 0.9, marginBottom: 8 }}>Profit & Expenses</div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>Income: {ledger.income.toFixed(2)}</div>
-        <div style={{ fontSize: 12, marginBottom: 6 }}>Expense: {ledger.expense.toFixed(2)}</div>
-        <div style={{ fontSize: 12, marginBottom: 10 }}>Profit: {ledger.profit.toFixed(2)}</div>
-        <button
-          onClick={createLedgerEntry}
-          style={{
-            textAlign: "left",
-            padding: "6px 8px",
-            borderRadius: 6,
-            border: "1px dashed #444",
-            background: "transparent",
-            color: "#9ca3af",
-            cursor: "pointer",
-            marginBottom: 16
-          }}
-        >
-          + Add Ledger Entry
-        </button>
 
         {canManageAccounts ? (
           <>
@@ -13138,6 +15793,24 @@ function App() {
               ? "Manufacturing Memory"
               : viewMode === "profit_intelligence"
               ? "Profit Intelligence"
+              : viewMode === "material_prediction"
+              ? "Material Prediction"
+              : viewMode === "ai_production_queue"
+              ? "AI Production Queue"
+              : viewMode === "lead_time_intelligence"
+              ? "Lead Time Intelligence"
+              : viewMode === "sheet_optimizer"
+              ? "Auto Sheet Optimizer"
+              : viewMode === "nesting_intelligence"
+              ? "Smart AI Nesting"
+              : viewMode === "nesting_workspace"
+              ? "Nesting"
+              : viewMode === "nesting_studio"
+              ? "Nesting"
+              : viewMode === "dxf_error_detection"
+              ? "DXF Error Detection"
+              : viewMode === "production_assistant"
+              ? "Production Assistant"
               : viewMode === "jobs"
               ? "Job Board"
               : viewMode === "part_dna"
@@ -13170,55 +15843,6 @@ function App() {
 
         {viewMode === "settings" ? (
           <PageContainer>
-            <div
-              style={{
-                background: UI.colors.cardBg,
-                borderRadius: UI.radius.md,
-                padding: 20,
-                marginBottom: 16,
-                position: "sticky",
-                top: 16,
-                float: "left",
-                width: 360,
-                marginRight: 16
-              }}
-            >
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Channels</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {activeServer?.channels.map((channel) => (
-                  <button
-                    key={channel.id}
-                    onClick={() => setActiveChannelId(channel.id)}
-                    style={{
-                      textAlign: "left",
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      border: "1px solid #2b2d31",
-                      background: channel.id === activeChannel?.id ? "#3b3d43" : "transparent",
-                      color: "white",
-                      cursor: "pointer"
-                    }}
-                  >
-                    # {channel.name}
-                  </button>
-                ))}
-                <button
-                  onClick={createChannel}
-                  style={{
-                    textAlign: "left",
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    border: "1px dashed #444",
-                    background: "transparent",
-                    color: "#9ca3af",
-                    cursor: "pointer"
-                  }}
-                >
-                  + Add Channel
-                </button>
-              </div>
-            </div>
-
             <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>Roles</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -13246,178 +15870,27 @@ function App() {
             </div>
 
             <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>Internet API Gateway</div>
-              <div style={{ fontSize: 12, opacity: 0.78, lineHeight: 1.5, marginBottom: 10 }}>
-                Point this app at a public server so it can work from any network. Example: `https://api.qouterx.com`
-              </div>
-              <input
-                value={gatewayApiUrl}
-                onChange={(e) => setGatewayApiUrl(e.target.value)}
-                placeholder="https://your-public-api-domain.com"
-                style={{
-                  width: "100%",
-                  padding: 10,
-                  borderRadius: 8,
-                  border: "1px solid #333",
-                  background: "#111",
-                  color: "white",
-                  marginBottom: 10
-                }}
-              />
-              <div style={{ fontSize: 12, opacity: 0.76, marginBottom: 10 }}>
-                Active API: {effectiveApiUrl}
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-                <button
-                  onClick={() => {
-                    void saveGatewayApiConfig();
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    border: "1px solid #2563eb",
-                    background: "#1d4ed8",
-                    color: "white",
-                    cursor: "pointer",
-                    fontWeight: 700
-                  }}
-                >
-                  Save Gateway
-                </button>
-                <button
-                  onClick={() => {
-                    setGatewayApiUrl("");
-                    void (async () => {
-                      if (window.desktopShell?.setApiConfig) {
-                        await window.desktopShell.setApiConfig({ gatewayApiUrl: null });
-                      }
-                      localStorage.removeItem(DESKTOP_GATEWAY_API_URL_KEY);
-                      setGatewayApiSaveStatus("Gateway cleared. Restart app to use the local API again.");
-                    })();
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    border: "1px solid #444",
-                    background: "#374151",
-                    color: "white",
-                    cursor: "pointer",
-                    fontWeight: 700
-                  }}
-                >
-                  Use Local API
-                </button>
-              </div>
-              <div style={{ fontSize: 11, opacity: 0.66 }}>
-                After saving a public gateway, restart the app on each PC. That server must expose this app’s `/api/*`, `/health`, and socket routes over HTTPS.
-              </div>
-              {gatewayApiSaveStatus ? (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    fontSize: 12,
-                    background: "rgba(29, 78, 216, 0.18)",
-                    border: "1px solid rgba(96, 165, 250, 0.35)"
-                  }}
-                >
-                  {gatewayApiSaveStatus}
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Email Settings (SMTP + IMAP)</div>
+                  <div style={{ fontSize: 12, opacity: 0.72, marginTop: 4 }}>Use Gmail with a Google app password, or enter custom mail server settings.</div>
                 </div>
-              ) : null}
-            </div>
-
-            <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>Company Sync Settings</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <label style={{ gridColumn: "span 2", display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={cloudSyncSettings.enabled}
-                    onChange={(e) => setCloudSyncSettings((current) => ({ ...current, enabled: e.target.checked }))}
-                  />
-                  Enable cloud reporting
-                </label>
-                <input
-                  value={cloudSyncSettings.companyId}
-                  onChange={(e) => setCloudSyncSettings((current) => ({ ...current, companyId: e.target.value }))}
-                  placeholder="Company ID"
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
-                />
-                <input
-                  value={cloudSyncSettings.deviceName}
-                  onChange={(e) => setCloudSyncSettings((current) => ({ ...current, deviceName: e.target.value }))}
-                  placeholder="Device name"
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
-                />
-                <select
-                  value={cloudSyncSettings.role}
-                  onChange={(e) =>
-                    setCloudSyncSettings((current) => ({
-                      ...current,
-                      role: e.target.value as CloudSyncSettingsRecord["role"]
-                    }))
-                  }
-                  style={{ padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
-                >
-                  <option value="admin">Admin</option>
-                  <option value="operator">Operator</option>
-                  <option value="sales">Sales</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                  <input
-                    type="checkbox"
-                    checked={cloudSyncSettings.adminMode}
-                    onChange={(e) => setCloudSyncSettings((current) => ({ ...current, adminMode: e.target.checked }))}
-                  />
-                  Main user / admin mode
-                </label>
-              </div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                 <button
-                  onClick={() => {
-                    void saveCloudSyncSettings();
-                  }}
+                  onClick={applyGmailEmailPreset}
                   style={{
-                    padding: "10px 12px",
+                    padding: "8px 12px",
                     borderRadius: 8,
-                    border: "1px solid #2563eb",
-                    background: "#1d4ed8",
+                    border: "1px solid rgba(96,165,250,0.45)",
+                    background: "rgba(37,99,235,0.22)",
                     color: "white",
                     cursor: "pointer",
-                    fontWeight: 700
+                    fontWeight: 700,
+                    whiteSpace: "nowrap"
                   }}
                 >
-                  Save Sync Settings
-                </button>
-                <button
-                  onClick={() => {
-                    void syncCloudNow();
-                  }}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    border: "1px solid #166534",
-                    background: "#15803d",
-                    color: "white",
-                    cursor: "pointer",
-                    fontWeight: 700
-                  }}
-                >
-                  Sync Now
+                  Add Gmail
                 </button>
               </div>
-              <div style={{ fontSize: 12, opacity: 0.74, marginTop: 10 }}>
-                Last sync status: {cloudSyncStatus ?? "No sync attempted yet."}
-              </div>
-              <div style={{ fontSize: 12, opacity: 0.74, marginTop: 6 }}>
-                Last seen time: {currentCloudDeviceRecord?.lastSeenAt ? new Date(currentCloudDeviceRecord.lastSeenAt).toLocaleString("en-ZA") : "No heartbeat yet."}
-              </div>
-            </div>
-
-            <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>Email Settings (SMTP + IMAP)</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <input
                   value={emailSettings.smtpHost}
@@ -13566,17 +16039,21 @@ function App() {
 
             <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>Device Access</div>
-              <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 8 }}>Device ID: {deviceId}</div>
-              <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 10 }}>
-                {deviceAccessStatus ?? "Loading device access..."}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                <input
+                  value={deviceId}
+                  readOnly
+                  placeholder="Device ID"
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
+                />
                 <input
                   value={redeemAccessCode}
                   onChange={(e) => setRedeemAccessCode(e.target.value.toUpperCase())}
-                  placeholder="Enter access code"
-                  style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
+                  placeholder="Access code"
+                  style={{ padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
                 />
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                 <button
                   onClick={() => {
                     void redeemDeviceAccessCode();
@@ -13594,7 +16071,29 @@ function App() {
                 >
                   {redeemBusy ? "Applying..." : "Apply Code"}
                 </button>
+                <button
+                  onClick={() => {
+                    void refreshDeviceAccess();
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #444",
+                    background: "#374151",
+                    color: "white",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
+                  Refresh Access
+                </button>
               </div>
+              {deviceAccessStatus ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{deviceAccessStatus}</div> : null}
+              {deviceAllowedFeatures ? (
+                <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+                  Allowed: {deviceAllowedFeatures.join(", ")}
+                </div>
+              ) : null}
               {redeemStatus ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{redeemStatus}</div> : null}
             </div>
 
@@ -13697,24 +16196,100 @@ function App() {
                 {generatorStatus ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{generatorStatus}</div> : null}
               </div>
             ) : null}
+
           </PageContainer>
         ) : viewMode === "chat" ? (
           <>
-            <PageContainer style={{ display: "flex", flexDirection: "column-reverse", padding: 20 }}>
-              {log.map((item, i) => {
-                if (typeof item === "string") {
-                  return (
-                    <div key={i} style={{ opacity: 0.8, marginBottom: 6 }}>
-                      {item}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={i} style={{ marginBottom: 8 }}>
-                    <b>{item.user}:</b> {item.text}
+            <PageContainer style={{ padding: 20, display: "grid", gridTemplateColumns: canManageAccounts ? "320px minmax(0, 1fr)" : "minmax(0, 1fr)", gap: 14, minHeight: 0 }}>
+              {canManageAccounts ? (
+                <div style={{ border: `1px solid ${UI.colors.border}`, borderRadius: 12, overflow: "hidden", background: "#151922" }}>
+                  <div style={{ padding: 14, fontWeight: 800, borderBottom: `1px solid ${UI.colors.border}` }}>
+                    User Chats
                   </div>
-                );
-              })}
+                  <div style={{ display: "flex", flexDirection: "column", maxHeight: "calc(100vh - 260px)", overflow: "auto" }}>
+                    {supportThreads.map((thread) => (
+                      <button
+                        key={thread.threadKey}
+                        onClick={() => setSelectedSupportThreadKey(thread.threadKey)}
+                        style={{
+                          textAlign: "left",
+                          padding: 12,
+                          border: "none",
+                          borderBottom: `1px solid ${UI.colors.border}`,
+                          background: selectedSupportThread?.threadKey === thread.threadKey ? "#1f2a44" : "transparent",
+                          color: "white",
+                          cursor: "pointer"
+                        }}
+                      >
+                        <div style={{ fontWeight: 800 }}>{thread.userName || thread.userEmail}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted }}>{thread.workspaceName}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          {thread.messages[thread.messages.length - 1]?.text ?? "No messages"}
+                        </div>
+                      </button>
+                    ))}
+                    {!supportThreads.length ? (
+                      <div style={{ padding: 14, color: UI.colors.muted, fontSize: 13 }}>
+                        No support chats yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ border: `1px solid ${UI.colors.border}`, borderRadius: 12, overflow: "hidden", background: "#151922", display: "flex", flexDirection: "column", minHeight: 520 }}>
+                <div style={{ padding: 14, borderBottom: `1px solid ${UI.colors.border}`, display: "flex", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 800 }}>
+                      {canManageAccounts
+                        ? selectedSupportThread
+                          ? `${selectedSupportThread.userName || selectedSupportThread.userEmail}`
+                          : "Select a user chat"
+                        : "Chat To Main User"}
+                    </div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                      {canManageAccounts
+                        ? selectedSupportThread?.userEmail ?? "Only you can see all support chats."
+                        : "Send problems or requests directly to the owner."}
+                    </div>
+                  </div>
+                  <Button onClick={() => void loadSupportThreads()} variant="secondary" disabled={supportLoading}>
+                    {supportLoading ? "Loading..." : "Refresh"}
+                  </Button>
+                </div>
+
+                <div style={{ flex: 1, padding: 16, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {(selectedSupportThread?.messages ?? []).map((message) => {
+                    const mine = canManageAccounts ? message.fromOwner : !message.fromOwner;
+                    return (
+                      <div
+                        key={message.id}
+                        style={{
+                          alignSelf: mine ? "flex-end" : "flex-start",
+                          maxWidth: "76%",
+                          padding: "10px 12px",
+                          borderRadius: 12,
+                          background: mine ? "#2563eb" : "#232833",
+                          color: "white",
+                          border: `1px solid ${mine ? "rgba(96,165,250,0.45)" : UI.colors.border}`
+                        }}
+                      >
+                        <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+                          {message.fromOwner ? "Owner" : message.userName || message.userEmail} · {formatDateTime(message.createdAt)}
+                        </div>
+                        <div style={{ whiteSpace: "pre-wrap" }}>{message.text}</div>
+                      </div>
+                    );
+                  })}
+                  {!selectedSupportThread && !canManageAccounts ? (
+                    <div style={{ color: UI.colors.muted }}>No messages yet. Send the first message below.</div>
+                  ) : null}
+                  {!selectedSupportThread && canManageAccounts ? (
+                    <div style={{ color: UI.colors.muted }}>Select a user on the left to reply.</div>
+                  ) : null}
+                </div>
+                {supportStatus ? <div style={{ padding: "0 16px 10px", color: "#fca5a5", fontSize: 12 }}>{supportStatus}</div> : null}
+              </div>
             </PageContainer>
 
             <div style={{ padding: 20, borderTop: `1px solid ${UI.colors.border}`, display: "flex", gap: 8 }}>
@@ -13722,10 +16297,10 @@ function App() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => (e.key === "Enter" ? send() : null)}
-                placeholder={`Message #${roomId}`}
+                placeholder={canManageAccounts ? "Reply to selected user" : "Message the main user"}
                 style={{ flex: 1, background: "#11161f" }}
               />
-              <Button onClick={send} variant="primary">
+              <Button onClick={send} variant="primary" disabled={canManageAccounts && !selectedSupportThread}>
                 Send
               </Button>
             </div>
@@ -13996,128 +16571,639 @@ function App() {
           </PageContainer>
         ) : viewMode === "brain_center" ? (
           <PageContainer>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+            <div style={{ display: "grid", gap: 16 }}>
               <Card>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
-                  <SectionHeader title="Recommendations" subtitle="Shared intelligence suggestions from Brain Core." />
-                  <Button onClick={() => void refreshBrainCenter()} variant="secondary">Refresh</Button>
+                  <SectionHeader title="Brain Center" subtitle="One connected intelligence layer across pricing, stock, queueing, DXF quality, and admin sync." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void runBrainOrchestrator("quick")} variant="secondary">Run Quick</Button>
+                    <Button onClick={() => void runBrainOrchestrator("full")} variant="primary">Run Full</Button>
+                    <Button onClick={() => void refreshBrainCenter()} variant="secondary">Refresh</Button>
+                  </div>
                 </div>
                 {brainError ? (
                   <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{brainError}</div>
                 ) : null}
-                <div style={{ display: "grid", gap: 12 }}>
-                  {brainRecommendations.map((recommendation) => {
-                    const payload = (() => {
-                      try {
-                        return JSON.parse(recommendation.payloadJson || "{}") as Record<string, unknown>;
-                      } catch {
-                        return {};
-                      }
-                    })();
-                    return (
-                      <div key={recommendation.id} style={{ padding: 14, borderRadius: 14, border: `1px solid ${UI.colors.border}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-                          <div>
-                            <div style={{ fontWeight: 800 }}>{recommendation.title}</div>
-                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{recommendation.message}</div>
-                          </div>
-                          <StatusBadge
-                            tone={
-                              recommendation.status === "accepted"
-                                ? "success"
-                                : recommendation.status === "dismissed"
-                                  ? "danger"
-                                  : "warning"
-                            }
-                          >
-                            {recommendation.status}
-                          </StatusBadge>
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12, fontSize: 12 }}>
-                          <div>Module: <b>{recommendation.moduleName}</b></div>
-                          <div>Confidence: <b>{Math.round(recommendation.confidence * 100)}%</b></div>
-                          <div>Impact: <b>{recommendation.impactScore}</b></div>
-                        </div>
-                        {"entityType" in payload || "entityId" in payload ? (
-                          <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>
-                            Target: {String(payload.entityType ?? "entity")} / {String(payload.entityId ?? "unknown")}
-                          </div>
-                        ) : null}
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                          <Button
-                            onClick={() => void updateBrainRecommendationStatus(recommendation.id, "accepted")}
-                            variant="primary"
-                            disabled={recommendation.status === "accepted"}
-                          >
-                            Accept
-                          </Button>
-                          <Button
-                            onClick={() => void updateBrainRecommendationStatus(recommendation.id, "dismissed")}
-                            variant="secondary"
-                            disabled={recommendation.status === "dismissed"}
-                          >
-                            Dismiss
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {!brainLoading && brainRecommendations.length === 0 ? (
-                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No recommendations yet.</div>
-                  ) : null}
-                  {brainLoading ? (
-                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Loading recommendations...</div>
-                  ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 10 }}>
+                  {[
+                    { label: "Open recommendations", value: brainDashboard?.topRecommendations.length ?? 0 },
+                    { label: "Profit today", value: ZAR_FORMATTER.format(brainDashboard?.profitSummary.profitToday ?? 0) },
+                    { label: "Profit month", value: ZAR_FORMATTER.format(brainDashboard?.profitSummary.profitMonth ?? 0) },
+                    { label: "Shortages", value: brainDashboard?.materialShortages.length ?? 0 },
+                    { label: "Offcut matches", value: brainDashboard?.offcutOpportunities.length ?? 0 },
+                    { label: "Lead-time risks", value: brainDashboard?.leadTimeRisks.length ?? 0 },
+                    { label: "DXF issues", value: brainDashboard?.dxfErrors.length ?? 0 },
+                    { label: "Pending sync", value: brainDashboard?.syncHealth.pendingSyncEvents ?? 0 }
+                  ].map((entry) => (
+                    <div key={entry.label} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>{entry.label}</div>
+                      <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{entry.value}</div>
+                    </div>
+                  ))}
                 </div>
               </Card>
-              <Card>
-                <SectionHeader title="Recent Events" subtitle="All future AI modules can build on this event stream." />
-                <div style={{ display: "grid", gap: 10 }}>
-                  {brainEvents.map((event) => {
-                    const payload = (() => {
-                      try {
-                        return JSON.parse(event.payloadJson || "{}") as Record<string, unknown>;
-                      } catch {
-                        return {};
-                      }
-                    })();
-                    return (
-                      <div key={event.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                          <div style={{ fontWeight: 800 }}>{event.eventType.replace(/_/g, " ")}</div>
-                          <div style={{ fontSize: 11, color: UI.colors.muted }}>{formatDateTime(event.createdAt)}</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 0.85fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Top Recommendations" subtitle="Shared actions collected from all Brain modules." />
+                  <div style={{ display: "grid", gap: 12 }}>
+                    {brainRecommendations.map((recommendation) => {
+                      const payload = (() => {
+                        try {
+                          return JSON.parse(recommendation.payloadJson || "{}") as Record<string, unknown>;
+                        } catch {
+                          return {};
+                        }
+                      })();
+                      return (
+                        <div key={recommendation.id} style={{ padding: 14, borderRadius: 14, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+                            <div>
+                              <div style={{ fontWeight: 800 }}>{recommendation.title}</div>
+                              <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{recommendation.message}</div>
+                            </div>
+                            <StatusBadge
+                              tone={
+                                recommendation.status === "accepted"
+                                  ? "success"
+                                  : recommendation.status === "dismissed"
+                                    ? "danger"
+                                    : "warning"
+                              }
+                            >
+                              {recommendation.status}
+                            </StatusBadge>
+                          </div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12, fontSize: 12 }}>
+                            <div>Module: <b>{recommendation.moduleName}</b></div>
+                            <div>Confidence: <b>{Math.round(recommendation.confidence * 100)}%</b></div>
+                            <div>Impact: <b>{recommendation.impactScore}</b></div>
+                          </div>
+                          {"entityType" in payload || "entityId" in payload ? (
+                            <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>
+                              Target: {String(payload.entityType ?? "entity")} / {String(payload.entityId ?? "unknown")}
+                            </div>
+                          ) : null}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                            <Button
+                              onClick={() => void updateBrainRecommendationStatus(recommendation.id, "accepted")}
+                              variant="primary"
+                              disabled={recommendation.status === "accepted"}
+                            >
+                              Accept
+                            </Button>
+                            <Button
+                              onClick={() => void updateBrainRecommendationStatus(recommendation.id, "dismissed")}
+                              variant="secondary"
+                              disabled={recommendation.status === "dismissed"}
+                            >
+                              Dismiss
+                            </Button>
+                          </div>
                         </div>
+                      );
+                    })}
+                    {!brainLoading && brainRecommendations.length === 0 ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No recommendations yet.</div>
+                    ) : null}
+                  </div>
+                </Card>
+                <Card>
+                  <SectionHeader title="Sync Health" subtitle="Subscription and admin reporting health across local and cloud sync." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {[
+                      { label: "Cloud sync", value: brainDashboard?.syncHealth.cloudSyncEnabled ? "Enabled" : "Disabled" },
+                      { label: "Pending sync events", value: brainDashboard?.syncHealth.pendingSyncEvents ?? 0 },
+                      { label: "Failed sync events", value: brainDashboard?.syncHealth.failedSyncEvents ?? 0 },
+                      { label: "Devices seen", value: brainDashboard?.syncHealth.recentDeviceCount ?? 0 },
+                      { label: "Recent sync errors", value: brainDashboard?.syncHealth.recentErrorCount ?? 0 },
+                      { label: "Active accounts", value: brainDashboard?.syncHealth.activeAccounts ?? 0 },
+                      { label: "Expired accounts", value: brainDashboard?.syncHealth.expiredAccounts ?? 0 },
+                      { label: "Pending payment proofs", value: brainDashboard?.syncHealth.pendingPaymentProofs ?? 0 }
+                    ].map((entry) => (
+                      <div key={entry.label} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ color: UI.colors.muted }}>{entry.label}</span>
+                        <b>{entry.value}</b>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Profit Warnings" subtitle="Low margin jobs and price pressure." />
+                    <Button onClick={() => void openBrainCenterDetail("profit")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.profitWarnings ?? []).map((entry) => (
+                      <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>{entry.jobId || `Profit #${entry.id}`}</div>
                         <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
-                          {event.entityType} · {event.entityId}
+                          {entry.material}{entry.thickness ? ` · ${entry.thickness}mm` : ""} · Margin {entry.marginPercent.toFixed(1)}%
                         </div>
-                        {Object.keys(payload).length > 0 ? (
-                          <pre
-                            style={{
-                              margin: "10px 0 0",
-                              padding: 10,
-                              borderRadius: 10,
-                              background: "rgba(2,6,23,0.56)",
-                              border: `1px solid ${UI.colors.border}`,
-                              color: UI.colors.muted,
-                              fontSize: 11,
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word"
-                            }}
-                          >
-                            {JSON.stringify(payload, null, 2)}
-                          </pre>
+                        <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 6 }}>
+                          Gross profit {ZAR_FORMATTER.format(entry.grossProfit)}
+                        </div>
+                      </div>
+                    ))}
+                    {!(brainDashboard?.profitWarnings.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No profit warnings.</div> : null}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Material Shortages" subtitle="Forecasted shortages and buying pressure." />
+                    <Button onClick={() => void openBrainCenterDetail("materials")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.materialShortages ?? []).map((entry, index) => (
+                      <div key={`${entry.material}-${entry.thickness}-${index}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>{entry.material} · {entry.thickness}mm</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          Need {entry.predictedSheetsNeeded.toFixed(2)} sheets in {entry.forecastPeriodDays} days
+                        </div>
+                        <div style={{ fontSize: 12, color: "#fbbf24", marginTop: 6 }}>
+                          Short by {entry.shortageSheets.toFixed(2)} · Buy {entry.recommendedBuySheets.toFixed(2)}
+                        </div>
+                      </div>
+                    ))}
+                    {!(brainDashboard?.materialShortages.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No shortages predicted.</div> : null}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Offcut Opportunities" subtitle="Best current offcut reuse opportunities." />
+                    <Button onClick={() => void openBrainCenterDetail("offcuts")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.offcutOpportunities ?? []).map((entry) => (
+                      <div key={entry.recommendation.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>{entry.recommendation.title}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{entry.recommendation.message}</div>
+                        {entry.offcut ? (
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                            Offcut #{entry.offcut.id} · {entry.offcut.material} · {entry.offcut.thickness}mm · {entry.offcut.width} x {entry.offcut.height} mm
+                          </div>
+                        ) : null}
+                        {entry.latestMatch ? (
+                          <div style={{ fontSize: 12, color: "#86efac", marginTop: 6 }}>
+                            {entry.latestMatch.fitType} fit · Saving {ZAR_FORMATTER.format(entry.latestMatch.savingEstimate)}
+                          </div>
                         ) : null}
                       </div>
-                    );
-                  })}
-                  {!brainLoading && brainEvents.length === 0 ? (
-                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No brain events captured yet.</div>
+                    ))}
+                    {!(brainDashboard?.offcutOpportunities.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No offcut matches right now.</div> : null}
+                  </div>
+                </Card>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Queue Plan" subtitle="Current AI production order and savings." />
+                    <Button onClick={() => void openBrainCenterDetail("queue")} variant="secondary">Open</Button>
+                  </div>
+                  {brainDashboard?.queuePlan ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 800 }}>{brainDashboard.queuePlan.title}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          {brainDashboard.queuePlan.status} · {Math.round(brainDashboard.queuePlan.totalEstimatedMinutes)} min · setup saving {Math.round(brainDashboard.queuePlan.setupSavingMinutes)} min · material saving {ZAR_FORMATTER.format(brainDashboard.queuePlan.materialSavingEstimate)}
+                        </div>
+                      </div>
+                      {brainDashboard.queuePlan.items.slice(0, 6).map((item, index) => (
+                        <div key={`${item.jobId}-${index}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontWeight: 700 }}>Job #{item.jobId}</div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{item.reason}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No queue plan generated yet.</div>
+                  )}
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Lead-Time Risks" subtitle="Predicted late jobs and schedule pressure." />
+                    <Button onClick={() => void openBrainCenterDetail("lead_time")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.leadTimeRisks ?? []).map((entry) => (
+                      <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>Job #{entry.jobId ?? "?"}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          Finish {formatDateTime(entry.estimatedFinishAt)} · {Math.round(entry.confidence * 100)}% confidence
+                        </div>
+                        <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 6 }}>
+                          {entry.riskWarnings.join(" • ")}
+                        </div>
+                      </div>
+                    ))}
+                    {!(brainDashboard?.leadTimeRisks.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No lead-time risks recorded.</div> : null}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="DXF Errors" subtitle="Recent files with cut-risk warnings or critical issues." />
+                    <Button onClick={() => void openBrainCenterDetail("dxf_errors")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.dxfErrors ?? []).map((entry) => (
+                      <div key={entry.dxfFileId} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>{entry.dxfFileId}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          Critical {entry.criticalCount} · Warning {entry.warningCount} · Info {entry.infoCount}
+                        </div>
+                        <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 6 }}>{formatDateTime(entry.latestAt)}</div>
+                      </div>
+                    ))}
+                    {!(brainDashboard?.dxfErrors.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No DXF issues captured.</div> : null}
+                  </div>
+                </Card>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16 }}>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Recent Events" subtitle="Shared event stream across all Brain modules." />
+                    <Button onClick={() => void openBrainCenterDetail("events")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {brainEvents.map((event) => {
+                      const payload = (() => {
+                        try {
+                          return JSON.parse(event.payloadJson || "{}") as Record<string, unknown>;
+                        } catch {
+                          return {};
+                        }
+                      })();
+                      return (
+                        <div key={event.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                            <div style={{ fontWeight: 800 }}>{event.eventType.replace(/_/g, " ")}</div>
+                            <div style={{ fontSize: 11, color: UI.colors.muted }}>{formatDateTime(event.createdAt)}</div>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                            {event.entityType} · {event.entityId}
+                          </div>
+                          {Object.keys(payload).length > 0 ? (
+                            <pre
+                              style={{
+                                margin: "10px 0 0",
+                                padding: 10,
+                                borderRadius: 10,
+                                background: "rgba(2,6,23,0.56)",
+                                border: `1px solid ${UI.colors.border}`,
+                                color: UI.colors.muted,
+                                fontSize: 11,
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word"
+                              }}
+                            >
+                              {JSON.stringify(payload, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    {!brainLoading && brainEvents.length === 0 ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No brain events captured yet.</div>
+                    ) : null}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Nesting and Purchasing" subtitle="Material buy signals and grouped nesting opportunities." />
+                    <Button onClick={() => void openBrainCenterDetail("nesting_purchasing")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {(brainDashboard?.purchaseRecommendations ?? []).slice(0, 4).map((entry) => (
+                      <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ fontWeight: 700 }}>{entry.material} · {entry.thickness}mm</div>
+                          <StatusBadge tone={entry.urgency === "urgent" ? "danger" : entry.urgency === "normal" ? "warning" : "info"}>{entry.urgency}</StatusBadge>
+                        </div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{entry.reason}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                          Buy {entry.recommendedQuantity} {entry.unit} · est. {ZAR_FORMATTER.format(entry.estimatedCost)}
+                        </div>
+                      </div>
+                    ))}
+                    {(brainDashboard?.nestingPlans ?? []).slice(0, 4).map((entry) => (
+                      <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>{entry.material} · {entry.thickness}mm</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                          Waste {entry.wastePercent.toFixed(1)}% · Saving {ZAR_FORMATTER.format(entry.estimatedSaving)} · {entry.status}
+                        </div>
+                      </div>
+                    ))}
+                    {!brainLoading && !(brainDashboard?.purchaseRecommendations.length || brainDashboard?.nestingPlans.length) ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No purchasing or nesting intelligence yet.</div>
+                    ) : null}
+                  </div>
+                </Card>
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start", marginBottom: 10 }}>
+                    <SectionHeader title="Production Assistant" subtitle="Factory questions using queue, stock, profit, DXF, and offcut data." />
+                    <Button onClick={() => void openBrainCenterDetail("production_assistant")} variant="secondary">Open</Button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                      Ask what to cut next, which jobs are late, which DXFs have issues, and what material needs buying.
+                    </div>
+                    {productionAssistantMessages.length ? (
+                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 700 }}>Latest answer</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4, lineHeight: 1.45 }}>
+                          {productionAssistantMessages[0]?.text.slice(0, 180)}
+                          {productionAssistantMessages[0]?.text.length > 180 ? "..." : ""}
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No assistant conversation yet.</div>
+                    )}
+                  </div>
+                </Card>
+              </div>
+
+              {brainCenterDetail ? (
+                <Card style={{ scrollMarginTop: 16 }} className="brain-center-detail-card">
+                  <div data-brain-detail="true" style={{ position: "relative", top: -16 }} />
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                    <SectionHeader
+                      title={
+                        brainCenterDetail === "profit"
+                          ? "Profit Details"
+                          : brainCenterDetail === "materials"
+                            ? "Material Shortage Details"
+                            : brainCenterDetail === "offcuts"
+                              ? "Offcut Opportunity Details"
+                              : brainCenterDetail === "queue"
+                                ? "Queue Plan Details"
+                                : brainCenterDetail === "lead_time"
+                                  ? "Lead-Time Details"
+                                  : brainCenterDetail === "dxf_errors"
+                                    ? "DXF Error Details"
+                                    : brainCenterDetail === "events"
+                                      ? "Recent Event Details"
+                                      : "Nesting and Purchasing Details"
+                      }
+                      subtitle="Detailed information opened from Brain Center."
+                    />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {brainCenterDetail === "profit" ? <Button onClick={() => void refreshProfitIntelligence()} variant="secondary">Refresh</Button> : null}
+                      {brainCenterDetail === "materials" ? <Button onClick={() => void refreshMaterialPrediction()} variant="secondary">Refresh</Button> : null}
+                      {brainCenterDetail === "queue" ? <Button onClick={() => void refreshProductionQueueBrain()} variant="secondary">Refresh</Button> : null}
+                      {brainCenterDetail === "lead_time" && activeLeadTimeJob ? (
+                        <Button onClick={() => void predictLeadTime(activeLeadTimeJob.id)} variant="secondary">Refresh</Button>
+                      ) : null}
+                      {brainCenterDetail === "nesting_purchasing" ? (
+                        <>
+                          <Button onClick={() => void refreshMaterialPrediction()} variant="secondary">Refresh Buying</Button>
+                          <Button onClick={() => void refreshNestingPlans()} variant="secondary">Refresh Nests</Button>
+                        </>
+                      ) : null}
+                      <Button onClick={() => setBrainCenterDetail(null)} variant="secondary">Close</Button>
+                    </div>
+                  </div>
+
+                  {brainCenterDetail === "profit" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.9fr) minmax(0, 1.1fr)", gap: 16 }}>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Warnings" subtitle="Low-margin and underpriced work." />
+                        {(brainDashboard?.profitWarnings ?? []).map((entry) => (
+                          <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>{entry.jobId || `Profit #${entry.id}`}</div>
+                              <StatusBadge tone={entry.marginPercent < 12 ? "danger" : "warning"}>{entry.marginPercent.toFixed(1)}%</StatusBadge>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                              Revenue {formatRand(entry.revenue)} · Cost {formatRand(entry.totalCost)} · Profit {formatRand(entry.grossProfit)}
+                            </div>
+                          </div>
+                        ))}
+                        {!(brainDashboard?.profitWarnings.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No profit warnings.</div> : null}
+                      </div>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Insights" subtitle="Stored pricing and customer profitability signals." />
+                        {profitInsights.slice(0, 8).map((insight) => (
+                          <div key={insight.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>{insight.title}</div>
+                              <StatusBadge tone={insight.insightType.includes("low") || insight.insightType.includes("underpriced") ? "warning" : "info"}>
+                                {Math.round(insight.confidence * 100)}%
+                              </StatusBadge>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{insight.message}</div>
+                          </div>
+                        ))}
+                        {!profitInsights.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No extra profit insight loaded yet.</div> : null}
+                      </div>
+                    </div>
                   ) : null}
-                  {brainLoading ? (
-                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Loading events...</div>
+
+                  {brainCenterDetail === "materials" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(materialShortages.length ? materialShortages : brainDashboard?.materialShortages ?? []).map((entry, index) => (
+                        <div key={`${entry.material}-${entry.thickness}-${index}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 800 }}>{entry.material} · {entry.thickness}mm</div>
+                            <StatusBadge tone="warning">{entry.recommendedBuySheets.toFixed(2)} buy</StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.recommendation}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                            <div>Window: <b>{entry.forecastPeriodDays}d</b></div>
+                            <div>Need: <b>{entry.predictedSheetsNeeded.toFixed(2)}</b></div>
+                            <div>Short by: <b>{entry.shortageSheets.toFixed(2)}</b></div>
+                            <div>Buy: <b>{entry.recommendedBuySheets.toFixed(2)}</b></div>
+                          </div>
+                        </div>
+                      ))}
+                      {!((materialShortages.length ? materialShortages : brainDashboard?.materialShortages ?? []).length) ? (
+                        <div style={{ fontSize: 12, color: UI.colors.muted }}>No shortage detail available.</div>
+                      ) : null}
+                    </div>
                   ) : null}
-                </div>
-              </Card>
+
+                  {brainCenterDetail === "offcuts" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(brainDashboard?.offcutOpportunities ?? []).map((entry) => (
+                        <div key={entry.recommendation.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 800 }}>{entry.recommendation.title}</div>
+                            <StatusBadge tone="success">{Math.round(entry.recommendation.confidence * 100)}%</StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.recommendation.message}</div>
+                          {entry.offcut ? (
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 8 }}>
+                              Offcut #{entry.offcut.id} · {entry.offcut.material} · {entry.offcut.thickness}mm · {entry.offcut.width} x {entry.offcut.height} mm
+                            </div>
+                          ) : null}
+                          {entry.latestMatch ? (
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                              <div>Fit: <b>{entry.latestMatch.fitType}</b></div>
+                              <div>Waste: <b>{entry.latestMatch.wasteArea.toFixed(2)}</b></div>
+                              <div>Saving: <b>{formatRand(entry.latestMatch.savingEstimate)}</b></div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                      {!(brainDashboard?.offcutOpportunities.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No offcut opportunities right now.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {brainCenterDetail === "queue" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.95fr) minmax(0, 1.05fr)", gap: 16 }}>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Current Plan" subtitle="Recommended production order and savings." />
+                        {productionQueuePlan || brainDashboard?.queuePlan ? (
+                          <>
+                            <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                              <div style={{ fontWeight: 800 }}>{(productionQueuePlan ?? brainDashboard?.queuePlan)?.title}</div>
+                              <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                                Status {(productionQueuePlan ?? brainDashboard?.queuePlan)?.status} · Setup saving {Math.round((productionQueuePlan ?? brainDashboard?.queuePlan)?.setupSavingMinutes ?? 0)} min · Material saving {formatRand((productionQueuePlan ?? brainDashboard?.queuePlan)?.materialSavingEstimate ?? 0)}
+                              </div>
+                            </div>
+                            {((productionQueuePlan ?? brainDashboard?.queuePlan)?.items ?? []).map((item, index) => (
+                              <div key={`${item.jobId}-${index}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                                <div style={{ fontWeight: 800 }}>Job #{item.jobId}</div>
+                                <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{item.reason}</div>
+                              </div>
+                            ))}
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>No queue plan detail loaded.</div>
+                        )}
+                      </div>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Job Scores" subtitle="Why the Brain ranks jobs where it does." />
+                        {productionQueueScores.slice(0, 12).map((entry) => (
+                          <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>Job #{entry.jobId}</div>
+                              <b>{entry.score.toFixed(1)}</b>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.reasons.join(" • ")}</div>
+                          </div>
+                        ))}
+                        {!productionQueueScores.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No queue scores loaded yet.</div> : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {brainCenterDetail === "lead_time" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {leadTimePrediction ? (
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, fontSize: 12 }}>
+                            <div>Start: <b>{formatDateTime(leadTimePrediction.estimatedStartAt)}</b></div>
+                            <div>Finish: <b>{formatDateTime(leadTimePrediction.estimatedFinishAt)}</b></div>
+                            <div>Confidence: <b>{Math.round(leadTimePrediction.confidence * 100)}%</b></div>
+                            <div>Queue load: <b>{Math.round(leadTimePrediction.queueLoadMinutes)} min</b></div>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 8 }}>{leadTimePrediction.reasons.join(" • ")}</div>
+                        </div>
+                      ) : null}
+                      {(brainDashboard?.leadTimeRisks ?? []).map((entry) => (
+                        <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontWeight: 800 }}>Job #{entry.jobId ?? "?"}</div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                            Finish {formatDateTime(entry.estimatedFinishAt)} · {Math.round(entry.confidence * 100)}% confidence
+                          </div>
+                          <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 6 }}>{entry.riskWarnings.join(" • ")}</div>
+                        </div>
+                      ))}
+                      {!leadTimePrediction && !(brainDashboard?.leadTimeRisks.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No lead-time detail loaded yet.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {brainCenterDetail === "dxf_errors" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {(brainDashboard?.dxfErrors ?? []).map((entry) => (
+                        <div key={entry.dxfFileId} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 800 }}>{entry.dxfFileId}</div>
+                            <StatusBadge tone={entry.criticalCount > 0 ? "danger" : entry.warningCount > 0 ? "warning" : "info"}>
+                              C{entry.criticalCount} / W{entry.warningCount}
+                            </StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                            Critical {entry.criticalCount} · Warning {entry.warningCount} · Info {entry.infoCount}
+                          </div>
+                          <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>Latest {formatDateTime(entry.latestAt)}</div>
+                        </div>
+                      ))}
+                      {!(brainDashboard?.dxfErrors.length) ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No DXF error detail available.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {brainCenterDetail === "events" ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {brainEvents.map((event) => {
+                        const payload = (() => {
+                          try {
+                            return JSON.parse(event.payloadJson || "{}") as Record<string, unknown>;
+                          } catch {
+                            return {};
+                          }
+                        })();
+                        return (
+                          <div key={event.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>{event.eventType.replace(/_/g, " ")}</div>
+                              <div style={{ fontSize: 11, color: UI.colors.muted }}>{formatDateTime(event.createdAt)}</div>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{event.entityType} · {event.entityId}</div>
+                            {Object.keys(payload).length ? (
+                              <pre style={{ margin: "10px 0 0", padding: 10, borderRadius: 10, background: "rgba(2,6,23,0.56)", border: `1px solid ${UI.colors.border}`, color: UI.colors.muted, fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                {JSON.stringify(payload, null, 2)}
+                              </pre>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      {!brainEvents.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No event detail available.</div> : null}
+                    </div>
+                  ) : null}
+
+                  {brainCenterDetail === "nesting_purchasing" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.9fr) minmax(0, 1.1fr)", gap: 16 }}>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Purchase Suggestions" subtitle="What the Brain thinks should be bought next." />
+                        {purchaseRecommendations.slice(0, 10).map((entry) => (
+                          <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>{entry.material} · {entry.thickness}mm</div>
+                              <StatusBadge tone={entry.urgency === "urgent" ? "danger" : entry.urgency === "normal" ? "warning" : "info"}>{entry.urgency}</StatusBadge>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.reason}</div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 8 }}>
+                              Buy {entry.recommendedQuantity} {entry.unit} · est. {formatRand(entry.estimatedCost)}
+                            </div>
+                          </div>
+                        ))}
+                        {!purchaseRecommendations.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No purchase detail loaded yet.</div> : null}
+                      </div>
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <SectionHeader title="Nesting Plans" subtitle="Grouped nest recommendations and savings." />
+                        {nestingPlans.slice(0, 8).map((entry) => (
+                          <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontWeight: 800 }}>{entry.material} · {entry.thickness}mm</div>
+                              <StatusBadge tone={entry.status === "approved" ? "success" : entry.status === "completed" ? "info" : "warning"}>{entry.status}</StatusBadge>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                              Waste {entry.wastePercent.toFixed(1)}% · Saving {formatRand(entry.estimatedSaving)} · Cut {Math.round(entry.estimatedCutTimeMinutes)} min
+                            </div>
+                          </div>
+                        ))}
+                        {!nestingPlans.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No nesting detail loaded yet.</div> : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </Card>
+              ) : null}
             </div>
           </PageContainer>
         ) : viewMode === "manufacturing_memory" ? (
@@ -14354,6 +17440,1482 @@ function App() {
                     ) : null}
                   </div>
                 </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "material_prediction" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="Material Prediction" subtitle="Forecast likely material demand from recent jobs, approved quotes, and repeat work." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void refreshMaterialPrediction()} variant="secondary">Refresh</Button>
+                    <Button onClick={() => void rebuildMaterialPrediction()} variant="primary">Rebuild Forecast</Button>
+                  </div>
+                </div>
+                {materialPredictionError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{materialPredictionError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Next 7 days</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>
+                      {materialForecasts.filter((entry) => entry.forecastPeriodDays === 7).reduce((sum, entry) => sum + entry.predictedKgNeeded, 0).toFixed(1)} kg
+                    </div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Next 30 days</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>
+                      {materialForecasts.filter((entry) => entry.forecastPeriodDays === 30).reduce((sum, entry) => sum + entry.predictedKgNeeded, 0).toFixed(1)} kg
+                    </div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Likely shortages</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{materialShortages.length}</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Avg confidence</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>
+                      {materialForecasts.length ? `${Math.round(materialForecasts.reduce((sum, entry) => sum + entry.confidence, 0) / materialForecasts.length * 100)}%` : "0%"}
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.1fr) minmax(0, 0.9fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Forecast Usage" subtitle="Expected usage over the next 7 and 30 days." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {materialForecasts.map((entry) => (
+                      <div key={`${entry.id}-${entry.forecastPeriodDays}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <div style={{ fontWeight: 800 }}>{entry.material} {entry.thickness}mm</div>
+                          <StatusBadge tone={entry.confidence >= 0.8 ? "success" : entry.confidence >= 0.6 ? "warning" : "info"}>
+                            {Math.round(entry.confidence * 100)}%
+                          </StatusBadge>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                          <div>Window: <b>{entry.forecastPeriodDays}d</b></div>
+                          <div>Sheets: <b>{entry.predictedSheetsNeeded.toFixed(2)}</b></div>
+                          <div>Weight: <b>{entry.predictedKgNeeded.toFixed(2)} kg</b></div>
+                          <div>Signals: <b>{entry.basedOnJobsCount} jobs / {entry.basedOnQuoteCount} quotes</b></div>
+                        </div>
+                      </div>
+                    ))}
+                    {!materialPredictionLoading && materialForecasts.length === 0 ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No material forecasts yet. Rebuild the forecast to generate one.</div>
+                    ) : null}
+                    {materialPredictionLoading ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Loading material forecasts...</div>
+                    ) : null}
+                  </div>
+                </Card>
+
+                <Card>
+                  <SectionHeader title="Likely Shortages" subtitle="Buy recommendations before material runs out." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {materialShortages.map((entry) => (
+                      <div key={`${entry.material}-${entry.thickness}-${entry.forecastPeriodDays}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                          <div style={{ fontWeight: 800 }}>{entry.material} {entry.thickness}mm</div>
+                          <StatusBadge tone="warning">{entry.recommendedBuySheets} buy</StatusBadge>
+                        </div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.recommendation}</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                          <div>Window: <b>{entry.forecastPeriodDays}d</b></div>
+                          <div>Shortage: <b>{entry.shortageSheets.toFixed(2)} sheets</b></div>
+                          <div>Stock now: <b>{entry.availableEquivalentSheets.toFixed(2)} eq</b></div>
+                        </div>
+                        <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>
+                          Confidence {Math.round(entry.confidence * 100)}% · Lead time {entry.leadTimeDays} days
+                          {entry.preferredSupplier ? ` · Supplier ${entry.preferredSupplier}` : ""}
+                        </div>
+                      </div>
+                    ))}
+                    {!materialPredictionLoading && materialShortages.length === 0 ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No likely shortages detected right now.</div>
+                    ) : null}
+                  </div>
+                </Card>
+              </div>
+
+              <Card>
+                <SectionHeader title="Purchasing Intelligence" subtitle="What to buy next, why it matters, and how urgent it is." />
+                <div style={{ display: "grid", gap: 10 }}>
+                  {purchaseRecommendations.map((entry) => (
+                    <div key={entry.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                        <div style={{ fontWeight: 800 }}>
+                          {entry.material} {entry.thickness}mm
+                        </div>
+                        <StatusBadge tone={entry.urgency === "urgent" ? "danger" : entry.urgency === "normal" ? "warning" : "info"}>
+                          {entry.urgency}
+                        </StatusBadge>
+                      </div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{entry.reason}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                        <div>Buy: <b>{entry.recommendedQuantity} {entry.unit}</b></div>
+                        <div>Est. cost: <b>{formatRand(entry.estimatedCost)}</b></div>
+                        <div>Status: <b>{entry.status}</b></div>
+                        <div>Supplier: <b>{entry.preferredSupplier ?? "Any"}</b></div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                        <Button onClick={() => void updatePurchaseRecommendation(entry.id, "mark-ordered")} variant="primary">
+                          Mark Ordered
+                        </Button>
+                        <Button onClick={() => void updatePurchaseRecommendation(entry.id, "dismiss")} variant="secondary">
+                          Dismiss
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {!materialPredictionLoading && purchaseRecommendations.length === 0 ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No purchase suggestions right now.</div>
+                  ) : null}
+                </div>
+              </Card>
+            </div>
+          </PageContainer>
+        ) : viewMode === "ai_production_queue" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="AI Production Queue" subtitle="Recommended job order using urgency, due dates, stock, offcuts, material risk, and Part DNA history." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void refreshProductionQueueBrain()} variant="secondary">Refresh</Button>
+                    <Button onClick={() => void createProductionQueuePlan()} variant="primary">Create Plan</Button>
+                  </div>
+                </div>
+                {productionQueueError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{productionQueueError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Current plan</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{productionQueuePlan?.title ?? "None"}</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Est. run time</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{Math.round(productionQueuePlan?.totalEstimatedMinutes ?? 0)} min</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Setup saving</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{Math.round(productionQueuePlan?.setupSavingMinutes ?? 0)} min</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Material saving</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{formatRand(productionQueuePlan?.materialSavingEstimate ?? 0)}</div>
+                  </div>
+                </div>
+                {productionQueuePlan ? (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                    {productionQueuePlan.status !== "active" ? (
+                      <Button onClick={() => void updateProductionQueuePlan(productionQueuePlan.id, "start")} variant="primary">Start Plan</Button>
+                    ) : null}
+                    {productionQueuePlan.status !== "completed" ? (
+                      <Button onClick={() => void updateProductionQueuePlan(productionQueuePlan.id, "complete")} variant="secondary">Complete Plan</Button>
+                    ) : null}
+                    <StatusBadge tone={productionQueuePlan.status === "active" ? "success" : productionQueuePlan.status === "completed" ? "info" : "warning"}>
+                      {productionQueuePlan.status}
+                    </StatusBadge>
+                  </div>
+                ) : null}
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 0.85fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Recommended Order" subtitle="Best run sequence with reasons for each job." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {productionQueuePlan?.items.map((item) => {
+                      const jobScore = productionQueueScores.find((entry) => entry.jobId === item.jobId);
+                      const jobDetails = smartQueueJobs.find((entry) => entry.id === item.jobId);
+                      const reasons = jobScore ? (() => {
+                        try {
+                          return JSON.parse(jobScore.reasonsJson) as string[];
+                        } catch {
+                          return [];
+                        }
+                      })() : [];
+                      return (
+                        <div key={item.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                            <div style={{ fontWeight: 800 }}>
+                              #{item.sortOrder + 1} {jobDetails?.jobNumber ?? `Job ${item.jobId}`} {jobDetails?.title ?? ""}
+                            </div>
+                            <StatusBadge tone={jobDetails?.priority === "urgent" ? "danger" : jobDetails?.ready ? "success" : "warning"}>
+                              Score {Math.round(jobScore?.score ?? 0)}
+                            </StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{item.reason}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginTop: 10, fontSize: 12 }}>
+                            <div>Material: <b>{jobDetails?.material ?? "—"}</b></div>
+                            <div>Thickness: <b>{jobDetails?.thickness ?? "—"}{jobDetails?.thickness ? "mm" : ""}</b></div>
+                            <div>Cut time: <b>{jobDetails?.estimatedCutTimeMinutes ?? 0} min</b></div>
+                            <div>Status: <b>{jobDetails?.status ?? "—"}</b></div>
+                          </div>
+                          {reasons.length ? (
+                            <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>
+                              {reasons.slice(0, 5).join(" • ")}
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                    {!productionQueueLoading && !productionQueuePlan ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No AI production plan yet. Create one to see the recommended order.</div>
+                    ) : null}
+                    {productionQueueLoading ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Loading AI production queue...</div>
+                    ) : null}
+                  </div>
+                </Card>
+
+                <Card>
+                  <SectionHeader title="Score Reasons" subtitle="Why jobs moved up or down in the queue." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {productionQueueScores.map((entry) => {
+                      const jobDetails = smartQueueJobs.find((job) => job.id === entry.jobId);
+                      const reasons = (() => {
+                        try {
+                          return JSON.parse(entry.reasonsJson) as string[];
+                        } catch {
+                          return [];
+                        }
+                      })();
+                      return (
+                        <div key={`${entry.id}-${entry.jobId}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ fontWeight: 800 }}>{jobDetails?.jobNumber ?? `Job ${entry.jobId}`}</div>
+                            <StatusBadge tone={entry.score >= 500 ? "danger" : entry.score >= 250 ? "warning" : "info"}>
+                              {Math.round(entry.score)}
+                            </StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>
+                            {reasons.length ? reasons.join(" • ") : "No reasons captured."}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {!productionQueueLoading && productionQueueScores.length === 0 ? (
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>No queue scores yet.</div>
+                    ) : null}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "lead_time_intelligence" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="Lead Time Intelligence" subtitle="Predict realistic start and finish dates from queue load, stock position, capacity, and Part DNA history." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void refreshSmartQueue()} variant="secondary">Refresh Jobs</Button>
+                    <Button
+                      onClick={() => activeLeadTimeJob ? void predictLeadTime(activeLeadTimeJob.id) : undefined}
+                      variant="primary"
+                      disabled={!activeLeadTimeJob}
+                    >
+                      Predict Lead Time
+                    </Button>
+                  </div>
+                </div>
+                {leadTimeError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{leadTimeError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 320px) minmax(0, 1fr)", gap: 16, alignItems: "end" }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Job</div>
+                    <select
+                      value={activeLeadTimeJob?.id ?? ""}
+                      onChange={(event) => {
+                        const nextId = Number(event.target.value);
+                        setSmartQueueSelectedJobId(Number.isFinite(nextId) ? nextId : null);
+                      }}
+                      style={{ width: "100%" }}
+                    >
+                      {smartQueueJobs.map((job) => (
+                        <option key={job.id} value={job.id}>
+                          {job.jobNumber} · {job.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Estimated start</div>
+                      <div style={{ fontWeight: 800, fontSize: 18, marginTop: 4 }}>{leadTimePrediction ? formatDateTime(leadTimePrediction.estimatedStartAt) : "—"}</div>
+                    </div>
+                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Estimated finish</div>
+                      <div style={{ fontWeight: 800, fontSize: 18, marginTop: 4 }}>{leadTimePrediction ? formatDateTime(leadTimePrediction.estimatedFinishAt) : "—"}</div>
+                    </div>
+                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Confidence</div>
+                      <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{leadTimePrediction ? `${Math.round(leadTimePrediction.confidence * 100)}%` : "—"}</div>
+                    </div>
+                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>Queue load</div>
+                      <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{leadTimePrediction ? `${Math.round(leadTimePrediction.queueLoadMinutes)} min` : "—"}</div>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Prediction Detail" subtitle="Main timing drivers behind this completion estimate." />
+                  {leadTimeLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Calculating lead time...</div>
+                  ) : leadTimePrediction ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, fontSize: 12 }}>
+                        <div>Setup: <b>{Math.round(leadTimePrediction.setupMinutes)} min</b></div>
+                        <div>Cut: <b>{Math.round(leadTimePrediction.adjustedCutTimeMinutes)} min</b></div>
+                        <div>Stock delay: <b>{leadTimePrediction.stockDelayDays.toFixed(1)} d</b></div>
+                        <div>Similar jobs: <b>{leadTimePrediction.similarHistorySamples}</b></div>
+                      </div>
+                      {leadTimePrediction.reasons.map((reason, index) => (
+                        <div key={`${index}-${reason}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, fontSize: 12 }}>
+                          {reason}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Select a job and run the predictor.</div>
+                  )}
+                </Card>
+
+                <Card>
+                  <SectionHeader title="Risk Warnings" subtitle="Things most likely to push the finish date out." />
+                  {leadTimeLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Checking risks...</div>
+                  ) : leadTimePrediction?.riskWarnings.length ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {leadTimePrediction.riskWarnings.map((warning, index) => (
+                        <div key={`${index}-${warning}`} style={{ padding: 12, borderRadius: 12, border: "1px solid rgba(248,113,113,0.35)", background: "rgba(127,29,29,0.16)" }}>
+                          <div style={{ fontSize: 12, color: "#fecaca" }}>{warning}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No major risk warnings on the current prediction.</div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "sheet_optimizer" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="Auto Sheet Optimizer" subtitle="Compare offcuts, full sheets, and order-required cases before quoting or cutting." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void refreshStock()} variant="secondary">Refresh Stock</Button>
+                    <Button onClick={() => void runSheetOptimization()} variant="primary">Optimize</Button>
+                  </div>
+                </div>
+                {sheetOptimizerError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{sheetOptimizerError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Linked job</div>
+                    <select
+                      value={activeSheetOptimizerJob?.id ?? ""}
+                      onChange={(event) => {
+                        const nextId = Number(event.target.value);
+                        setSmartQueueSelectedJobId(Number.isFinite(nextId) ? nextId : null);
+                      }}
+                      style={{ width: "100%" }}
+                    >
+                      {smartQueueJobs.map((job) => (
+                        <option key={job.id} value={job.id}>
+                          {job.jobNumber} · {job.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Material</div>
+                    <Input value={sheetOptimizerMaterial} onChange={(event) => setSheetOptimizerMaterial(event.target.value)} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Thickness (mm)</div>
+                    <Input value={sheetOptimizerThickness} onChange={(event) => setSheetOptimizerThickness(event.target.value)} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Required Width (mm)</div>
+                    <Input value={sheetOptimizerWidth} onChange={(event) => setSheetOptimizerWidth(event.target.value)} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Required Height (mm)</div>
+                    <Input value={sheetOptimizerHeight} onChange={(event) => setSheetOptimizerHeight(event.target.value)} />
+                  </div>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Best Source" subtitle="What to cut from first and how much waste it will create." />
+                  {sheetOptimizerLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Optimizing sheet source...</div>
+                  ) : sheetOptimizerResult ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Recommended</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{sheetOptimizerResult.recommendedSourceType.replace(/_/g, " ")}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Waste</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{sheetOptimizerResult.wastePercent.toFixed(2)}%</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Saving</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{formatRand(sheetOptimizerResult.savingEstimate)}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Confidence</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{Math.round(sheetOptimizerResult.confidence * 100)}%</div>
+                        </div>
+                      </div>
+                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ fontWeight: 800 }}>{sheetOptimizerResult.sourceLabel}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{sheetOptimizerResult.recommendation}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 8 }}>
+                          Fit: <b>{sheetOptimizerResult.fitType}</b> · Required: <b>{sheetOptimizerResult.requiredWidth} x {sheetOptimizerResult.requiredHeight} mm</b>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Run the optimizer to compare offcuts, sheets, and ordering.</div>
+                  )}
+                </Card>
+
+                <Card>
+                  <SectionHeader title="Recommendation" subtitle="Why this source won, and whether another sheet size would save more." />
+                  {sheetOptimizerLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Checking waste and stock guidance...</div>
+                  ) : sheetOptimizerResult ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, fontSize: 12 }}>
+                        {sheetOptimizerResult.stockMessage}
+                      </div>
+                      {sheetOptimizerResult.betterSheetWarning ? (
+                        <div style={{ padding: 12, borderRadius: 12, border: "1px solid rgba(251,191,36,0.35)", background: "rgba(120,53,15,0.16)", fontSize: 12, color: "#fde68a" }}>
+                          {sheetOptimizerResult.betterSheetWarning}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No optimizer result yet.</div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "nesting_studio" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                  <SectionHeader title="Nesting" subtitle="Manual and AI nesting with sheet/offcut selection, puzzle-fit placement, warnings, and customer-named DXF exports." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void runNestingStudio()} variant="primary" disabled={nestingStudioLoading}>Auto Nest</Button>
+                    <Button onClick={() => void runNestingStudio(30000)} variant="secondary" disabled={nestingStudioLoading}>Optimize More</Button>
+                    <Button onClick={rotateSelectedNestingStudioPlacement} variant="secondary" disabled={!nestingStudioSelectedPartId || nestingStudioLoading}>Rotate 90°</Button>
+                    <Button onClick={deleteSelectedNestingStudioPlacement} variant="secondary" disabled={!nestingStudioSelectedPartId || nestingStudioLoading}>Delete Placement</Button>
+                    <Button onClick={() => void exportNestingStudioDxf()} variant="secondary" disabled={!nestingStudioResult || nestingStudioLoading}>Export DXF</Button>
+                  </div>
+                </div>
+                {nestingStudioError ? <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{nestingStudioError}</div> : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10 }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Customer
+                    <Input value={nestingStudioCustomer} onChange={(event) => setNestingStudioCustomer(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Nest name
+                    <Input value={nestingStudioNestName} onChange={(event) => setNestingStudioNestName(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Material
+                    <Input value={nestingStudioMaterial} onChange={(event) => setNestingStudioMaterial(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Thickness
+                    <Input value={nestingStudioThickness} onChange={(event) => setNestingStudioThickness(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Sheet width
+                    <Input value={nestingStudioSheetWidth} onChange={(event) => setNestingStudioSheetWidth(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Sheet height
+                    <Input value={nestingStudioSheetHeight} onChange={(event) => setNestingStudioSheetHeight(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Kerf
+                    <Input value={nestingStudioKerf} onChange={(event) => setNestingStudioKerf(event.target.value)} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Spacing
+                    <Input value={nestingStudioSpacing} onChange={(event) => setNestingStudioSpacing(event.target.value)} />
+                  </label>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 10 }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Border
+                    <Input value={nestingStudioBorder} onChange={(event) => setNestingStudioBorder(event.target.value)} />
+                  </label>
+                  <div style={{ alignSelf: "end", fontSize: 12, color: UI.colors.muted }}>
+                    Source: {nestingStudioSelectedOffcutId ? `Offcut #${nestingStudioSelectedOffcutId}` : "Full sheet"}
+                  </div>
+                  <Button onClick={() => setNestingStudioSelectedOffcutId(null)} variant="secondary" disabled={!nestingStudioSelectedOffcutId}>Use Full Sheet</Button>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(280px, 0.6fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Preview" subtitle="Canvas preview of the current nesting result." />
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: UI.colors.muted }}>
+                      <input type="checkbox" checked={nestingStudioSnapToGrid} onChange={(event) => setNestingStudioSnapToGrid(event.target.checked)} />
+                      Snap to grid
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: UI.colors.muted }}>
+                      <input type="checkbox" checked={nestingStudioShowSpacingBoundary} onChange={(event) => setNestingStudioShowSpacingBoundary(event.target.checked)} />
+                      Spacing boundary
+                    </label>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: UI.colors.muted }}>
+                      <input type="checkbox" checked={nestingStudioShowNfpDebug} onChange={(event) => setNestingStudioShowNfpDebug(event.target.checked)} />
+                      NFP debug
+                    </label>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Selected: {nestingStudioSelectedPartId ?? "none"}</div>
+                  </div>
+                  <canvas
+                    ref={nestingStudioCanvasRef}
+                    width={1200}
+                    height={600}
+                    onMouseDown={handleNestingStudioCanvasMouseDown}
+                    onMouseMove={handleNestingStudioCanvasMouseMove}
+                    onMouseUp={stopNestingStudioDrag}
+                    onMouseLeave={stopNestingStudioDrag}
+                    style={{ width: "100%", borderRadius: 8, background: "#07111f", display: "block", cursor: nestingStudioResult ? "grab" : "default" }}
+                  />
+                </Card>
+                <Card>
+                  <SectionHeader title="Results" subtitle="Last run from the existing engine." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {[
+                      ["Placed", String(nestingStudioResult?.placements.length ?? 0)],
+                      ["Unplaced", String(nestingStudioResult?.unplaced.length ?? 0)],
+                      ["Usage", `${(nestingStudioResult?.usagePercent ?? 0).toFixed(2)}%`],
+                      ["Waste", `${(nestingStudioResult?.wastePercent ?? 0).toFixed(2)}%`],
+                      ["Attempts", String(nestingStudioResult?.optimizationProgress?.attemptsCompleted ?? 0)],
+                      ["Cut order", String(nestingStudioResult?.cutOrder?.length ?? 0)],
+                      ["Heat score", `${(nestingStudioResult?.heatScore ?? 0).toFixed(0)}/100`],
+                      ["Common-line", `${(nestingStudioResult?.commonLineSaving ?? 0).toFixed(2)} mm`]
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}` }}>
+                        <span style={{ color: UI.colors.muted }}>{label}</span>
+                        <b>{value}</b>
+                      </div>
+                    ))}
+                    {nestingStudioExportPath ? (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <div style={{ fontSize: 11, color: UI.colors.muted, wordBreak: "break-word" }}>Exported: {nestingStudioExportPath}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <Button onClick={() => void openNestingStudioExportFolder()} variant="secondary">Open Folder</Button>
+                          <Button onClick={() => void createNestingStudioLeftoverOffcut()} variant="secondary" disabled={nestingStudioLoading}>Create Leftover Offcut</Button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {(nestingStudioResult?.warnings ?? []).map((warning) => (
+                      <div key={warning} style={{ fontSize: 12, color: "#fde68a" }}>{warning}</div>
+                    ))}
+                  </div>
+                </Card>
+              </div>
+              <Card>
+                <SectionHeader title="Offcuts" subtitle="Available matching offcuts for Nesting Studio." />
+                {nestingStudioOffcutRecommendation ? (
+                  <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, border: "1px solid rgba(34,197,94,0.35)", color: "#bbf7d0", fontSize: 12 }}>
+                    Recommended: Use offcut #{nestingStudioOffcutRecommendation.offcut.id}. Waste {nestingStudioOffcutRecommendation.wastePercent.toFixed(1)}% · Saving R{nestingStudioOffcutRecommendation.estimatedSaving.toFixed(2)}
+                  </div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                  {nestingStudioOffcuts.map((offcut) => (
+                    <div key={offcut.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${offcut.id === nestingStudioSelectedOffcutId ? "#22c55e" : UI.colors.border}`, display: "grid", gap: 8 }}>
+                      <img src={createOffcutPreviewDataUrl(offcut)} alt="" style={{ width: "100%", height: 72, objectFit: "contain", background: "#020617", borderRadius: 6 }} />
+                      <div style={{ fontWeight: 800 }}>Offcut #{offcut.id}</div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>{offcut.material} · {offcut.thickness} mm</div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>{offcut.width} x {offcut.height} mm · Area {Math.round(offcut.usableArea)} mm²</div>
+                      <div style={{ fontSize: 11, color: UI.colors.muted }}>Source: {offcut.sourceCustomerId ?? offcut.sourceJobId ?? offcut.sourceWorkspaceId ?? "manual"} · {offcut.location ?? "No location"}</div>
+                      <Button onClick={() => selectNestingStudioOffcut(offcut)} variant="secondary">Use Offcut</Button>
+                    </div>
+                  ))}
+                  {!nestingStudioOffcuts.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No available nesting offcuts saved yet.</div> : null}
+                </div>
+              </Card>
+            </div>
+          </PageContainer>
+        ) : viewMode === "nesting_workspace" ? (
+          <PageContainer key="nesting-workspace" style={{ padding: 0, overflow: "auto", height: "100%", background: UI.colors.appBg }}>
+            <div style={{ display: "grid", gap: 16, minHeight: "100%", padding: 16, background: UI.colors.appBg }}>
+              <div style={{ padding: "16px 20px", border: "1px solid transparent", borderRadius: 12, background: UI.colors.cardBgStrong }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <SectionHeader title="Qouter X Nest Program" />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void saveNestingWorkspaceSettings()} variant="primary" disabled={nestingWorkspaceLoading}>Save Nest</Button>
+                    <Button onClick={() => void runNestingWorkspaceAutoNest()} variant="secondary" disabled={!nestingWorkspaceActive || nestingWorkspaceLoading}>Run Nest Program</Button>
+                    <Button onClick={() => setNestingWorkspaceManualMode((value) => !value)} variant="secondary">Manual Nest Mode</Button>
+                    <Button onClick={() => void exportNestingWorkspaceDxf()} variant="secondary" disabled={!nestingWorkspaceActive || nestingWorkspaceLoading}>Export DXF</Button>
+                  </div>
+                </div>
+                {nestingWorkspaceError ? <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 10 }}>{nestingWorkspaceError}</div> : null}
+                {nestingWorkspaceRecommendation ? (
+                  <div style={{ marginTop: 12, padding: 12, borderRadius: 8, border: "1px solid rgba(110,231,183,0.32)", background: "rgba(20,83,45,0.18)", fontSize: 13 }}>
+                    {nestingWorkspaceRecommendation.message}
+                    <Button onClick={() => void useNestingWorkspaceOffcut(nestingWorkspaceRecommendation)} variant="primary" style={{ marginLeft: 12, minHeight: 32, padding: "8px 10px" }}>
+                      Use Offcut
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) minmax(520px, 1fr) minmax(320px, 380px)", gap: 16, alignItems: "start", minHeight: 0 }}>
+                <Card compact style={{ minWidth: 0 }}>
+                  <SectionHeader title="Sheet Setup" subtitle="Customer, material, and cutting settings." />
+                  <div style={{ display: "grid", gap: 12 }}>
+                    <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Customer
+                      <select
+                        value={nestingWorkspaceCustomerId}
+                        onChange={(event) => {
+                          const customer = customers.find((entry) => entry.id === event.target.value);
+                          setNestingWorkspaceCustomerId(event.target.value);
+                          setNestingWorkspaceCustomerName(customer?.name ?? "Walk-in");
+                        }}
+                        style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }}
+                      >
+                        <option value="">Walk-in / Manual</option>
+                        {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                      </select>
+                    </label>
+                    <Input value={nestingWorkspaceCustomerName} onChange={(event) => setNestingWorkspaceCustomerName(event.target.value)} placeholder="Customer name" />
+                    <Input value={nestingWorkspaceNestName} onChange={(event) => setNestingWorkspaceNestName(event.target.value)} placeholder="Nest name" />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 8 }}>
+                      <Input value={nestingWorkspaceMaterial} onChange={(event) => setNestingWorkspaceMaterial(event.target.value)} placeholder="Material" />
+                      <Input value={nestingWorkspaceThickness} onChange={(event) => setNestingWorkspaceThickness(event.target.value)} placeholder="mm" />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <Input value={nestingWorkspaceSheetWidth} onChange={(event) => setNestingWorkspaceSheetWidth(event.target.value)} placeholder="Width" />
+                      <Input value={nestingWorkspaceSheetHeight} onChange={(event) => setNestingWorkspaceSheetHeight(event.target.value)} placeholder="Height" />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                      <Input value={nestingWorkspaceBorder} onChange={(event) => setNestingWorkspaceBorder(event.target.value)} placeholder="Border" />
+                      <Input value={nestingWorkspaceKerf} onChange={(event) => setNestingWorkspaceKerf(event.target.value)} placeholder="Kerf" />
+                      <Input value={nestingWorkspaceSpacing} onChange={(event) => setNestingWorkspaceSpacing(event.target.value)} placeholder="Spacing" />
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <select value={nestingWorkspaceLeadInType} onChange={(event) => setNestingWorkspaceLeadInType(event.target.value as "line" | "arc")} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }}>
+                        <option value="line">Line lead-in</option>
+                        <option value="arc">Arc lead-in</option>
+                      </select>
+                      <Input value={nestingWorkspaceLeadInLength} onChange={(event) => setNestingWorkspaceLeadInLength(event.target.value)} placeholder="Lead length" />
+                    </div>
+                    {[
+                      ["Allow rotation", nestingWorkspaceAllowRotation, setNestingWorkspaceAllowRotation],
+                      ["Allow common line", nestingWorkspaceAllowCommonLine, setNestingWorkspaceAllowCommonLine],
+                      ["Enable micro joins", nestingWorkspaceEnableMicroJoins, setNestingWorkspaceEnableMicroJoins],
+                      ["Grid", nestingWorkspaceShowGrid, setNestingWorkspaceShowGrid],
+                      ["Collision overlay", nestingWorkspaceShowCollision, setNestingWorkspaceShowCollision],
+                      ["Sheet border", nestingWorkspaceShowBorder, setNestingWorkspaceShowBorder],
+                      ["Show bounding boxes", nestingWorkspaceShowBoundingBoxes, setNestingWorkspaceShowBoundingBoxes]
+                    ].map(([label, checked, setter]) => (
+                      <label key={String(label)} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                        <input type="checkbox" checked={Boolean(checked)} onChange={(event) => (setter as React.Dispatch<React.SetStateAction<boolean>>)(event.target.checked)} />
+                        {String(label)}
+                      </label>
+                    ))}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <Button onClick={() => { setNestingWorkspaceActive(null); setNestingWorkspaceNestName("New Nest"); }} variant="secondary">New</Button>
+                      <Button onClick={() => void saveNestingWorkspaceSettings()} variant="primary">Save</Button>
+                      <Button onClick={() => void recommendNestingWorkspaceOffcuts()} variant="secondary" disabled={!nestingWorkspaceActive}>Recommend Offcut</Button>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <Button onClick={() => void (nestingWorkspaceActive && apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}`, { method: "PATCH", body: JSON.stringify({ sourceType: "sheet", sourceId: null, sheetWidth: Number(nestingWorkspaceSheetWidth), sheetHeight: Number(nestingWorkspaceSheetHeight) }) }).then(() => refreshNestingWorkspaceData(nestingWorkspaceActive.id)))} variant="secondary" disabled={!nestingWorkspaceActive}>Use Full Sheet</Button>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card compact style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                    <SectionHeader title="Program Preview" subtitle={nestingWorkspaceActive ? `${nestingWorkspaceActive.sourceType.toUpperCase()} · ${nestingWorkspaceActive.sheetWidth} x ${nestingWorkspaceActive.sheetHeight} mm` : "Create or open a nest program."} />
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Button onClick={() => setNestingWorkspaceZoom((value) => Math.max(0.5, value - 0.1))} variant="secondary">-</Button>
+                      <Button onClick={() => setNestingWorkspaceZoom(1)} variant="secondary">Fit</Button>
+                      <Button onClick={() => setNestingWorkspaceZoom((value) => Math.min(2, value + 0.1))} variant="secondary">+</Button>
+                    </div>
+                  </div>
+                  {nestingWorkspaceActive ? (
+                    <div style={{ overflow: "auto", border: "1px solid transparent", borderRadius: 8, background: "#07111f", padding: 14, minHeight: 460, maxHeight: "calc(100vh - 310px)" }}>
+                      {nestingWorkspaceActive.placements.some((placement) => {
+                        const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
+                        return !nestingWorkspaceGeometryPaths(part, placement).hasTrueGeometry;
+                      }) ? (
+                        <div style={{ color: "#fbbf24", fontSize: 12, marginBottom: 10 }}>
+                          DXF preview geometry missing — bounding box fallback
+                        </div>
+                      ) : null}
+                      <svg
+                        viewBox={`0 0 ${nestingWorkspaceActive.sheetWidth} ${nestingWorkspaceActive.sheetHeight}`}
+                        style={{ width: `${100 * nestingWorkspaceZoom}%`, minWidth: 520, aspectRatio: `${nestingWorkspaceActive.sheetWidth} / ${nestingWorkspaceActive.sheetHeight}`, display: "block" }}
+                      >
+                        <defs>
+                          <pattern id="nest-grid" width="100" height="100" patternUnits="userSpaceOnUse">
+                            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(148,163,184,0.22)" strokeWidth="1" />
+                          </pattern>
+                        </defs>
+                        <rect x="0" y="0" width={nestingWorkspaceActive.sheetWidth} height={nestingWorkspaceActive.sheetHeight} fill={nestingWorkspaceShowGrid ? "url(#nest-grid)" : "#08111f"} stroke={nestingWorkspaceActive.sourceType === "offcut" ? "#fbbf24" : "#94a3b8"} strokeWidth="3" />
+                        {nestingWorkspaceShowBorder ? (
+                          <rect
+                            x={nestingWorkspaceActive.border}
+                            y={nestingWorkspaceActive.border}
+                            width={Math.max(0, nestingWorkspaceActive.sheetWidth - nestingWorkspaceActive.border * 2)}
+                            height={Math.max(0, nestingWorkspaceActive.sheetHeight - nestingWorkspaceActive.border * 2)}
+                            fill="none"
+                            stroke="rgba(110,231,183,0.55)"
+                            strokeDasharray="10 8"
+                            strokeWidth="2"
+                          />
+                        ) : null}
+                        {nestingWorkspaceActive.placements.map((placement) => {
+                          const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
+                          const rotated = placement.rotation === 90 || placement.rotation === 270;
+                          const width = rotated ? part?.height ?? 10 : part?.width ?? 10;
+                          const height = rotated ? part?.width ?? 10 : part?.height ?? 10;
+                          const selected = nestingWorkspaceSelectedPlacementId === placement.id;
+                          const warning = placement.hasCollision || placement.isOutsideSheet;
+                          const geometry = nestingWorkspaceGeometryPaths(part, placement);
+                          return (
+                            <g key={placement.id} onClick={() => setNestingWorkspaceSelectedPlacementId(placement.id)} style={{ cursor: "pointer" }}>
+                              {geometry.outerPath ? (
+                                <path
+                                  d={[geometry.outerPath, ...geometry.holePaths].join(" ")}
+                                  fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
+                                  stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
+                                  strokeWidth={selected ? 4 : 2}
+                                  fillRule="evenodd"
+                                />
+                              ) : (
+                                <rect
+                                  x={placement.x}
+                                  y={placement.y}
+                                  width={width}
+                                  height={height}
+                                  fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
+                                  stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
+                                  strokeWidth={selected ? 4 : 2}
+                                />
+                              )}
+                              {geometry.segmentLines.map((segment, index) => (
+                                <line
+                                  key={`${placement.id}-segment-${index}`}
+                                  x1={segment.start.x}
+                                  y1={segment.start.y}
+                                  x2={segment.end.x}
+                                  y2={segment.end.y}
+                                  stroke={segment.kind === "arc" || segment.kind === "circle" ? "#fbbf24" : "#a7f3d0"}
+                                  strokeWidth={selected ? 2.5 : 1.5}
+                                  fill="none"
+                                />
+                              ))}
+                              {geometry.circleShapes.map((circle, index) => (
+                                <circle
+                                  key={`${placement.id}-circle-${index}`}
+                                  cx={circle.center.x}
+                                  cy={circle.center.y}
+                                  r={circle.r}
+                                  fill="none"
+                                  stroke="#fbbf24"
+                                  strokeWidth={selected ? 2.5 : 1.5}
+                                />
+                              ))}
+                              {geometry.arcPaths.map((path, index) => (
+                                <path
+                                  key={`${placement.id}-arc-${index}`}
+                                  d={path}
+                                  fill="none"
+                                  stroke="#fbbf24"
+                                  strokeWidth={selected ? 2.5 : 1.5}
+                                />
+                              ))}
+                              {nestingWorkspaceShowBoundingBoxes || !geometry.hasTrueGeometry ? (
+                                <rect
+                                  x={placement.x}
+                                  y={placement.y}
+                                  width={width}
+                                  height={height}
+                                  fill="none"
+                                  stroke={!geometry.hasTrueGeometry ? "#fbbf24" : "rgba(148,163,184,0.72)"}
+                                  strokeDasharray="8 6"
+                                  strokeWidth="2"
+                                />
+                              ) : null}
+                              {!geometry.hasTrueGeometry ? <title>No DXF geometry loaded — showing bounding box fallback</title> : null}
+                              {selected ? (
+                                <>
+                                  <text x={placement.x + 8} y={placement.y + 18} fill="#e5e7eb" fontSize="12">{part?.fileName ?? `Part ${placement.partId}`}</text>
+                                  <text x={placement.x + 8} y={placement.y + 34} fill="#94a3b8" fontSize="10">Rot {placement.rotation}°</text>
+                                </>
+                              ) : null}
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  ) : (
+                    <div style={{ minHeight: 460, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid transparent", borderRadius: 8, color: UI.colors.muted }}>
+                      Create a nesting workspace to start.
+                    </div>
+                  )}
+                  {nestingWorkspaceManualMode && nestingWorkspaceActive ? (
+                    <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <Button onClick={() => void moveNestingWorkspacePlacement(-10, 0)} variant="secondary">Left</Button>
+                      <Button onClick={() => void moveNestingWorkspacePlacement(10, 0)} variant="secondary">Right</Button>
+                      <Button onClick={() => void moveNestingWorkspacePlacement(0, -10)} variant="secondary">Up</Button>
+                      <Button onClick={() => void moveNestingWorkspacePlacement(0, 10)} variant="secondary">Down</Button>
+                      <Button onClick={() => void moveNestingWorkspacePlacement(0, 0, 90)} variant="secondary">Rotate 90°</Button>
+                      <span style={{ fontSize: 12, color: UI.colors.muted }}>Selected: {nestingWorkspaceSelectedPlacementId ?? "none"}</span>
+                    </div>
+                  ) : null}
+                </Card>
+
+                <div style={{ display: "grid", gap: 16, minWidth: 0 }}>
+                  <Card compact>
+                    <SectionHeader title="Nest Parts & Plates" subtitle="Import DXF parts, pull jobs or quotes, set quantities, then run the nesting program." />
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                        <Button onClick={() => void addDxfToNestingWorkspaceFromDesktopPicker()} variant="primary" disabled={nestingWorkspaceLoading}>Browse DXF</Button>
+                        <input
+                          type="file"
+                          accept=".dxf"
+                          onChange={(event) => {
+                            void addDxfToNestingWorkspace(event.target.files?.[0] ?? null);
+                            event.currentTarget.value = "";
+                          }}
+                          disabled={nestingWorkspaceLoading}
+                          title="Fallback upload if the desktop picker is unavailable"
+                          style={{ maxWidth: 220 }}
+                        />
+                      </div>
+                      <select onChange={(event) => void addJobToNestingWorkspace(jobs.find((job) => job.id === event.target.value) ?? null)} disabled={nestingWorkspaceLoading} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }}>
+                        <option value="">Add from Job</option>
+                        {jobs.map((job) => <option key={job.id} value={job.id}>{job.jobNumber} · {job.title}</option>)}
+                      </select>
+                      <select onChange={(event) => void addQuoteToNestingWorkspace(quotes.find((quote) => quote.id === event.target.value) ?? null)} disabled={nestingWorkspaceLoading} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }}>
+                        <option value="">Add from Quote</option>
+                        {quotes.map((quote) => <option key={quote.id} value={quote.id}>{quote.quoteNumber} · {quote.title}</option>)}
+                      </select>
+                      <div style={{ display: "grid", gap: 8, maxHeight: 190, overflow: "auto" }}>
+                        {(nestingWorkspaceActive?.parts ?? []).map((part) => {
+                          const previewDataUrl = createNestingPartPreviewDataUrl(part);
+                          return (
+                            <div key={part.id} style={{ display: "grid", gridTemplateColumns: "64px minmax(0, 1fr)", gap: 10, alignItems: "center", padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}` }}>
+                              <div style={{ width: 64, height: 44, borderRadius: 6, border: `1px solid ${UI.colors.border}`, background: "#020617", overflow: "hidden", display: "grid", placeItems: "center" }}>
+                                {previewDataUrl ? <img src={previewDataUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <span style={{ fontSize: 10, color: UI.colors.muted }}>DXF</span>}
+                              </div>
+                              <div style={{ minWidth: 0, display: "grid", gap: 5 }}>
+                                <div style={{ fontWeight: 800, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{part.fileName}</div>
+                                <div style={{ fontSize: 11, color: UI.colors.muted }}>{part.width.toFixed(0)} x {part.height.toFixed(0)} mm · Pierce {part.pierceCount}</div>
+                                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: UI.colors.muted }}>
+                                  Qty
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    defaultValue={part.quantity}
+                                    disabled={nestingWorkspaceLoading}
+                                    onBlur={(event) => void updateNestingWorkspacePartQuantity(part.id, Number(event.currentTarget.value))}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.currentTarget.blur();
+                                      }
+                                    }}
+                                    style={{ width: 68, padding: "5px 7px", borderRadius: 7, border: `1px solid ${UI.colors.border}`, background: "#0b1220", color: UI.colors.text }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {!(nestingWorkspaceActive?.parts ?? []).length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No parts added.</div> : null}
+                      </div>
+                    </div>
+                  </Card>
+
+                  <Card compact>
+                    <SectionHeader title="Warnings" subtitle="Collision, border, lead-in, heat, and tab checks." />
+                    <div style={{ display: "grid", gap: 6, maxHeight: 150, overflow: "auto" }}>
+                      {(nestingWorkspaceActive?.warnings ?? []).map((warning, index) => (
+                        <div key={`${warning.message}-${index}`} style={{ fontSize: 12, color: warning.severity === "critical" ? "#fca5a5" : warning.severity === "warning" ? "#fde68a" : "#bfdbfe" }}>
+                          {warning.severity.toUpperCase()}: {warning.message}
+                        </div>
+                      ))}
+                      {!(nestingWorkspaceActive?.warnings ?? []).length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No warnings.</div> : null}
+                    </div>
+                  </Card>
+
+                  <Card compact>
+                    <SectionHeader title="Results" subtitle="Current workspace metrics." />
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      {[
+                        ["Usage", `${(nestingWorkspaceActive?.usagePercent ?? 0).toFixed(1)}%`],
+                        ["Waste", `${(nestingWorkspaceActive?.wastePercent ?? 0).toFixed(1)}%`],
+                        ["Cut length", `${Math.round(nestingWorkspaceActive?.estimatedCutLength ?? 0)} mm`],
+                        ["Pierces", String(nestingWorkspaceActive?.estimatedPierceCount ?? 0)]
+                      ].map(([label, value]) => (
+                        <div key={label} style={{ padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 11, color: UI.colors.muted }}>{label}</div>
+                          <div style={{ fontWeight: 800 }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 10, fontSize: 11, color: UI.colors.muted }}>Export: {nestingWorkspaceActive?.exportedDxfPath ?? "Not exported"}</div>
+                    <Button onClick={() => void createNestingWorkspaceOffcuts()} variant="secondary" disabled={!nestingWorkspaceActive} style={{ marginTop: 10 }}>Create Offcuts</Button>
+                  </Card>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(360px, 1fr) minmax(360px, 1fr)", gap: 16, alignItems: "start" }}>
+                <Card compact style={{ minHeight: 220 }}>
+                  <SectionHeader title="Offcut Library" subtitle="Previous nesting offcuts with DXF-style previews." />
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                    {nestingWorkspaceOffcuts.map((offcut) => {
+                      const preview = (() => {
+                        try {
+                          return JSON.parse(offcut.previewJson || "{}") as { outline?: Array<{ x: number; y: number }> };
+                        } catch {
+                          return {};
+                        }
+                      })();
+                      const outline = preview.outline?.length ? preview.outline : [{ x: 0, y: 0 }, { x: offcut.width, y: 0 }, { x: offcut.width, y: offcut.height }, { x: 0, y: offcut.height }];
+                      return (
+                        <div key={offcut.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}`, display: "grid", gap: 8 }}>
+                          <svg viewBox={`0 0 ${offcut.width} ${offcut.height}`} style={{ width: "100%", aspectRatio: "2 / 1", background: "#07111f", borderRadius: 6 }}>
+                            <polygon points={outline.map((point) => `${point.x},${point.y}`).join(" ")} fill="rgba(251,191,36,0.12)" stroke="#fbbf24" strokeWidth="3" />
+                            <text x="8" y="18" fill="#e5e7eb" fontSize="12">OFFCUT-{offcut.id}</text>
+                          </svg>
+                          <div style={{ fontWeight: 800 }}>OFFCUT-{offcut.id}</div>
+                          <div style={{ fontSize: 11, color: UI.colors.muted }}>{offcut.material} · {offcut.thickness}mm · {Math.round(offcut.width)} x {Math.round(offcut.height)} · {offcut.location ?? "No location"}</div>
+                          <div style={{ fontSize: 11, color: UI.colors.muted }}>Area {Math.round(offcut.usableArea)} mm² · {formatDateTime(offcut.createdAt)}</div>
+                          <Button onClick={() => void useNestingWorkspaceOffcut(offcut)} variant="secondary">Use this offcut</Button>
+                        </div>
+                      );
+                    })}
+                    {!nestingWorkspaceOffcuts.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No nesting offcuts saved yet.</div> : null}
+                  </div>
+                </Card>
+                <Card compact style={{ minHeight: 220 }}>
+                  <SectionHeader title="Nesting History" subtitle="Open, duplicate, reuse offcut, or export previous nests." />
+                  <div style={{ display: "grid", gap: 10, maxHeight: 300, overflow: "auto" }}>
+                    {nestingWorkspaceHistory.map((entry) => (
+                      <div key={entry.id} style={{ padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ fontWeight: 800 }}>{entry.nestName}</div>
+                          <StatusBadge tone={entry.status === "exported" ? "success" : entry.status === "nested" ? "info" : "warning"}>{entry.status}</StatusBadge>
+                        </div>
+                        <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 5 }}>{entry.customerName} · {entry.material} · {entry.thickness}mm · Waste {(entry.wastePercent ?? 0).toFixed(1)}%</div>
+                        <div style={{ fontSize: 11, color: UI.colors.muted }}>DXF: {entry.exportedDxfPath ?? "Not exported"}</div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                          <Button onClick={() => void refreshNestingWorkspaceData(entry.id)} variant="secondary" style={{ minHeight: 32, padding: "8px 10px" }}>Open</Button>
+                          <Button onClick={() => { setNestingWorkspaceActive(null); setNestingWorkspaceNestName(`${entry.nestName} Copy`); setNestingWorkspaceMaterial(entry.material); setNestingWorkspaceThickness(String(entry.thickness)); setNestingWorkspaceSheetWidth(String(entry.sheetWidth)); setNestingWorkspaceSheetHeight(String(entry.sheetHeight)); }} variant="secondary" style={{ minHeight: 32, padding: "8px 10px" }}>Duplicate</Button>
+                          <Button onClick={() => void exportNestingWorkspaceDxf()} variant="secondary" style={{ minHeight: 32, padding: "8px 10px" }}>Export Again</Button>
+                        </div>
+                      </div>
+                    ))}
+                    {!nestingWorkspaceHistory.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No previous nesting history yet.</div> : null}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "nesting_intelligence" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="Smart AI Nesting" subtitle="Group queued parts by material and thickness, prefer offcuts, and generate draft nesting plans." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void refreshNestingPlans()} variant="secondary">Refresh</Button>
+                    <Button onClick={() => void createNestingRecommendations()} variant="primary">Recommend Nests</Button>
+                  </div>
+                </div>
+                {nestingError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{nestingError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Draft plans</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{nestingPlans.filter((plan) => plan.status === "draft").length}</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Approved</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{nestingPlans.filter((plan) => plan.status === "approved").length}</div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Avg waste</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>
+                      {nestingPlans.length ? `${(nestingPlans.reduce((sum, plan) => sum + plan.wastePercent, 0) / nestingPlans.length).toFixed(1)}%` : "—"}
+                    </div>
+                  </div>
+                  <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Estimated saving</div>
+                    <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>
+                      {nestingPlans.length ? formatRand(nestingPlans.reduce((sum, plan) => sum + plan.estimatedSaving, 0)) : "—"}
+                    </div>
+                  </div>
+                </div>
+              </Card>
+
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                  <SectionHeader title="Advanced Nesting Engine" subtitle="Run real 2D sheet packing with rotations, common-line savings, lead-ins, micro joins, manufacturability warnings, and nested DXF export." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void runAdvancedNestingEngine()} variant="primary" disabled={nestingLoading}>Optimize</Button>
+                    <Button onClick={() => void exportAdvancedNestingDxf()} variant="secondary" disabled={!advancedNestResult?.jobId || nestingLoading}>Export DXF</Button>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10, alignItems: "end" }}>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Material
+                    <input value={advancedNestMaterial} onChange={(event) => setAdvancedNestMaterial(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Thickness
+                    <input value={advancedNestThickness} onChange={(event) => setAdvancedNestThickness(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Sheet W
+                    <input value={advancedNestSheetWidth} onChange={(event) => setAdvancedNestSheetWidth(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Sheet H
+                    <input value={advancedNestSheetHeight} onChange={(event) => setAdvancedNestSheetHeight(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Kerf
+                    <input value={advancedNestKerf} onChange={(event) => setAdvancedNestKerf(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Spacing
+                    <input value={advancedNestSpacing} onChange={(event) => setAdvancedNestSpacing(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Border
+                    <input value={advancedNestBorder} onChange={(event) => setAdvancedNestBorder(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Lead-in
+                    <select value={advancedNestLeadInType} onChange={(event) => setAdvancedNestLeadInType(event.target.value as "line" | "arc")} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }}>
+                      <option value="line">Line</option>
+                      <option value="arc">Arc</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6, fontSize: 12, color: UI.colors.muted }}>Lead length
+                    <input value={advancedNestLeadInLength} onChange={(event) => setAdvancedNestLeadInLength(event.target.value)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${UI.colors.border}`, background: "#111827", color: "white" }} />
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 42, color: UI.colors.text, fontSize: 13 }}>
+                    <input type="checkbox" checked={advancedNestAllowCommonLine} onChange={(event) => setAdvancedNestAllowCommonLine(event.target.checked)} /> Common-line
+                  </label>
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", minHeight: 42, color: UI.colors.text, fontSize: 13 }}>
+                    <input type="checkbox" checked={advancedNestEnableMicroJoins} onChange={(event) => setAdvancedNestEnableMicroJoins(event.target.checked)} /> Micro joins
+                  </label>
+                </div>
+
+                {advancedNestResult ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", gap: 16, marginTop: 16 }}>
+                    <div>
+                      <div style={{ position: "relative", aspectRatio: `${advancedNestResult.sheetWidth} / ${advancedNestResult.sheetHeight}`, border: `1px solid ${UI.colors.border}`, background: "#0b1220", overflow: "hidden", borderRadius: 8 }}>
+                        {advancedNestResult.placements.map((placement) => (
+                          <div key={placement.id} title={`Rot ${placement.rotation}°`} style={{
+                            position: "absolute",
+                            left: `${(placement.x / advancedNestResult.sheetWidth) * 100}%`,
+                            top: `${(placement.y / advancedNestResult.sheetHeight) * 100}%`,
+                            width: `${(placement.width / advancedNestResult.sheetWidth) * 100}%`,
+                            height: `${(placement.height / advancedNestResult.sheetHeight) * 100}%`,
+                            border: placement.isCommonLine ? "2px solid #38bdf8" : "1px solid #6ee7b7",
+                            background: placement.isCommonLine ? "rgba(56,189,248,0.18)" : "rgba(110,231,183,0.12)"
+                          }} />
+                        ))}
+                        {advancedNestResult.microJoins.map((tab, index) => (
+                          <div key={`${tab.placementId}-${index}`} style={{
+                            position: "absolute",
+                            left: `${(tab.x / advancedNestResult.sheetWidth) * 100}%`,
+                            top: `${(tab.y / advancedNestResult.sheetHeight) * 100}%`,
+                            width: 8,
+                            height: 8,
+                            borderRadius: 8,
+                            background: "#f59e0b"
+                          }} />
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                        {[
+                          { label: "Usage", value: `${advancedNestResult.usagePercent.toFixed(1)}%` },
+                          { label: "Waste", value: `${advancedNestResult.wastePercent.toFixed(1)}%` },
+                          { label: "Cut length", value: `${advancedNestResult.estimatedCutLength.toFixed(0)} mm` },
+                          { label: "Pierces", value: String(advancedNestResult.estimatedPierceCount) },
+                          { label: "Cut time", value: `${advancedNestResult.estimatedCutTimeMinutes.toFixed(1)} min` },
+                          { label: "Common-line", value: formatRand(advancedNestResult.commonLineSavingEstimate) }
+                        ].map((metric) => (
+                          <div key={metric.label} style={{ padding: 10, borderRadius: 8, border: `1px solid ${UI.colors.border}` }}>
+                            <div style={{ fontSize: 11, color: UI.colors.muted }}>{metric.label}</div>
+                            <div style={{ fontWeight: 800, marginTop: 3 }}>{metric.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                        DXF export: {advancedNestResult.dxfExportPath ?? "Not exported"}
+                      </div>
+                      <div style={{ display: "grid", gap: 6, maxHeight: 160, overflow: "auto" }}>
+                        {advancedNestResult.warnings.map((warning, index) => (
+                          <div key={`${warning.message}-${index}`} style={{ fontSize: 12, color: warning.severity === "critical" ? "#fca5a5" : warning.severity === "warning" ? "#fde68a" : "#bfdbfe" }}>
+                            {warning.severity.toUpperCase()}: {warning.message}
+                          </div>
+                        ))}
+                        {!advancedNestResult.warnings.length ? <div style={{ fontSize: 12, color: UI.colors.muted }}>No manufacturability warnings.</div> : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </Card>
+
+              {nestingSkippedGroups.length ? (
+                <Card>
+                  <SectionHeader title="Blocked Groups" subtitle="Material groups that still need stock or a better sheet source before they can nest." />
+                  <div style={{ display: "grid", gap: 10 }}>
+                    {nestingSkippedGroups.map((group, index) => (
+                      <div key={`${group.material}-${group.thickness}-${index}`} style={{ padding: 12, borderRadius: 12, border: "1px solid rgba(251,191,36,0.35)", background: "rgba(120,53,15,0.16)" }}>
+                        <div style={{ fontWeight: 800 }}>{group.material} · {group.thickness} mm</div>
+                        <div style={{ fontSize: 12, color: "#fde68a", marginTop: 6 }}>{group.reason}</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 8 }}>
+                          Jobs: {group.jobIds.map((id) => smartQueueJobs.find((job) => job.id === id)?.jobNumber ?? `#${id}`).join(", ") || "—"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 16 }}>
+                {nestingLoading && !nestingPlans.length ? (
+                  <Card>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Building nesting recommendations...</div>
+                  </Card>
+                ) : null}
+                {!nestingLoading && nestingPlans.length === 0 ? (
+                  <Card>
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No nesting plans yet. Run the recommender to group queued jobs into sheet or offcut nests.</div>
+                  </Card>
+                ) : null}
+                {nestingPlans.map((plan) => {
+                  const groupedJobs = Array.from(new Set(plan.items.map((item) => item.jobId).filter((value): value is number => value !== null)))
+                    .map((jobId) => smartQueueJobs.find((job) => job.id === jobId))
+                    .filter((job): job is SmartQueueJob => Boolean(job));
+                  return (
+                    <Card key={plan.id}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 22, fontWeight: 800 }}>{plan.material} · {plan.thickness} mm</div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>
+                            Source: <b>{plan.sheetSourceType}</b> #{plan.sheetSourceId ?? "?"} · Plate <b>{Math.round(plan.width)} x {Math.round(plan.height)} mm</b>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <StatusBadge tone={plan.status === "approved" ? "success" : plan.status === "completed" ? "info" : "warning"}>
+                            {plan.status}
+                          </StatusBadge>
+                          {plan.status === "draft" ? (
+                            <Button variant="primary" onClick={() => void approveNestingPlan(plan.id)}>Approve Plan</Button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 12 }}>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Waste</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{plan.wastePercent.toFixed(2)}%</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Saving</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{formatRand(plan.estimatedSaving)}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Est. cut time</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{Math.round(plan.estimatedCutTimeMinutes)} min</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Grouped jobs</div>
+                          <div style={{ fontWeight: 800, fontSize: 20, marginTop: 4 }}>{groupedJobs.length}</div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.95fr) minmax(0, 1.05fr)", gap: 16 }}>
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <SectionHeader title="Grouped Jobs" subtitle="Queue jobs included in this nesting recommendation." />
+                          {groupedJobs.length ? groupedJobs.map((job) => (
+                            <div key={job.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                <div style={{ fontWeight: 800 }}>{job.jobNumber} · {job.title}</div>
+                                <div style={{ fontSize: 12, color: UI.colors.muted }}>{job.material} · {job.thickness ?? "?"} mm</div>
+                              </div>
+                              <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>
+                                Reasons: {job.queueReasons.slice(0, 3).join(" • ") || "Grouped for shared material and thickness."}
+                              </div>
+                            </div>
+                          )) : (
+                            <div style={{ fontSize: 12, color: UI.colors.muted }}>No linked queue jobs were found for this plan.</div>
+                          )}
+                        </div>
+
+                        <div style={{ display: "grid", gap: 10 }}>
+                          <SectionHeader title="Placed Parts" subtitle="Simple shelf-placement coordinates that can be replaced by a full nesting engine later." />
+                          <div style={{ display: "grid", gap: 8, maxHeight: 340, overflow: "auto", paddingRight: 4 }}>
+                            {plan.items.map((item) => (
+                              <div key={item.id} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, fontSize: 12 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                  <div>
+                                    Job: <b>{item.jobId ? smartQueueJobs.find((job) => job.id === item.jobId)?.jobNumber ?? `#${item.jobId}` : item.quoteId ?? "Unlinked"}</b>
+                                  </div>
+                                  <div>Part DNA: <b>{item.partDnaId ? `#${item.partDnaId}` : "—"}</b></div>
+                                </div>
+                                <div style={{ color: UI.colors.muted, marginTop: 6 }}>
+                                  X {Math.round(item.x)} · Y {Math.round(item.y)} · Rot {item.rotation}° · Qty {item.quantity}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "dxf_error_detection" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="DXF Error Detection" subtitle="Catch open contours, tiny holes, bad geometry, and likely burn issues before cutting." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void runDxfErrorCheck()} variant="primary">Check DXF</Button>
+                  </div>
+                </div>
+                {dxfErrorError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{dxfErrorError}</div>
+                ) : null}
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) 180px", gap: 12, alignItems: "end" }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>DXF file</div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <input
+                        type="file"
+                        accept=".dxf"
+                        onChange={(event) => {
+                          setDxfErrorFile(event.target.files?.[0] ?? null);
+                          event.currentTarget.value = "";
+                        }}
+                        style={{ minWidth: 180, flex: 1 }}
+                      />
+                      <Button onClick={() => void pickDxfErrorFileFromDesktop()} variant="secondary">Browse DXF</Button>
+                    </div>
+                    {dxfErrorFile ? <div style={{ marginTop: 6, fontSize: 11, color: UI.colors.muted }}>{dxfErrorFile.name}</div> : null}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Material thickness (mm)</div>
+                    <Input value={dxfErrorThickness} onChange={(event) => setDxfErrorThickness(event.target.value)} />
+                  </div>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 0.95fr) minmax(0, 1.05fr)", gap: 16 }}>
+                <Card>
+                  <SectionHeader title="Warnings & Critical Issues" subtitle="Severity-sorted DXF findings from the current file." />
+                  {dxfErrorLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Checking DXF geometry...</div>
+                  ) : dxfErrorResult ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>File</div>
+                          <div style={{ fontWeight: 800, fontSize: 14, marginTop: 4 }}>{dxfErrorResult.dxfFileId}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Critical</div>
+                          <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{dxfErrorResult.summary.criticalCount}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Warnings</div>
+                          <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{dxfErrorResult.summary.warningCount}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>Info</div>
+                          <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4 }}>{dxfErrorResult.summary.infoCount}</div>
+                        </div>
+                      </div>
+                      {dxfErrorResult.reports.map((report) => (
+                        <div
+                          key={report.id}
+                          style={{
+                            padding: 12,
+                            borderRadius: 12,
+                            border:
+                              report.severity === "critical"
+                                ? "1px solid rgba(248,113,113,0.35)"
+                                : report.severity === "warning"
+                                ? "1px solid rgba(251,191,36,0.35)"
+                                : `1px solid ${UI.colors.border}`,
+                            background:
+                              report.severity === "critical"
+                                ? "rgba(127,29,29,0.16)"
+                                : report.severity === "warning"
+                                ? "rgba(120,53,15,0.16)"
+                                : "transparent"
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                            <div style={{ fontWeight: 800 }}>{report.errorType.replace(/_/g, " ")}</div>
+                            <StatusBadge tone={report.severity === "critical" ? "danger" : report.severity === "warning" ? "warning" : "info"}>
+                              {report.severity}
+                            </StatusBadge>
+                          </div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{report.message}</div>
+                          {report.entityRef ? (
+                            <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 8 }}>Ref: {report.entityRef}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Choose a DXF file and run the check.</div>
+                  )}
+                </Card>
+
+                <Card>
+                  <SectionHeader title="Recommended Fixes" subtitle="Suggested cleanup steps before nesting or cutting." />
+                  {dxfErrorLoading ? (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>Preparing recommended fixes...</div>
+                  ) : dxfErrorResult ? (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {dxfErrorResult.recommendedFixes.length ? (
+                        dxfErrorResult.recommendedFixes.map((fix, index) => (
+                          <div key={`${index}-${fix}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, fontSize: 12 }}>
+                            {fix}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ fontSize: 12, color: UI.colors.muted }}>No specific fixes suggested.</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: UI.colors.muted }}>No DXF check result yet.</div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          </PageContainer>
+        ) : viewMode === "production_assistant" ? (
+          <PageContainer>
+            <div style={{ display: "grid", gap: 16 }}>
+              <Card>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                  <SectionHeader title="Production Assistant" subtitle="Ask deterministic factory questions using Qouter X queue, stock, profit, DXF, and offcut data." />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Button onClick={() => void askProductionAssistant()} variant="primary" disabled={productionAssistantLoading}>
+                      {productionAssistantLoading ? "Thinking..." : "Ask"}
+                    </Button>
+                  </div>
+                </div>
+                {productionAssistantError ? (
+                  <div style={{ fontSize: 12, color: "#fca5a5", marginBottom: 12 }}>{productionAssistantError}</div>
+                ) : null}
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, alignItems: "end" }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>Question</div>
+                      <Input
+                        value={productionAssistantInput}
+                        onChange={(event) => setProductionAssistantInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void askProductionAssistant();
+                          }
+                        }}
+                        placeholder="What jobs are late?"
+                      />
+                    </div>
+                    <Button onClick={() => void askProductionAssistant()} variant="primary" disabled={productionAssistantLoading}>
+                      Send
+                    </Button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {[
+                      "What jobs are late?",
+                      "What should we cut next?",
+                      "Which jobs can combine?",
+                      "What material must we buy?",
+                      "Which jobs are low profit?",
+                      "Which customer owes money?",
+                      "Which DXFs have errors?",
+                      "Which offcuts can be used?"
+                    ].map((question) => (
+                      <Button key={question} variant="secondary" onClick={() => void askProductionAssistant(question)} disabled={productionAssistantLoading}>
+                        {question}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {productionAssistantMessages.map((message, index) => (
+                  <Card key={`${message.at}-${index}`}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14 }}>
+                        {message.role === "assistant" ? "Production Assistant" : "You"}
+                      </div>
+                      <div style={{ fontSize: 11, color: UI.colors.muted }}>{formatDateTime(message.at)}</div>
+                    </div>
+                    <div style={{ fontSize: 14, lineHeight: 1.5 }}>{message.text}</div>
+                    {message.role === "assistant" && message.response ? (
+                      <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
+                        {message.response.sourceModules.length ? (
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                            Sources: {message.response.sourceModules.join(", ")}
+                          </div>
+                        ) : null}
+                        {message.response.recommendations.length ? (
+                          <div style={{ display: "grid", gap: 8 }}>
+                            {message.response.recommendations.map((recommendation, recIndex) => (
+                              <div key={`${recommendation.title}-${recIndex}`} style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}` }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                                  <div style={{ fontWeight: 800 }}>{recommendation.title}</div>
+                                  {typeof recommendation.confidence === "number" ? (
+                                    <div style={{ fontSize: 11, color: UI.colors.muted }}>{Math.round(recommendation.confidence * 100)}%</div>
+                                  ) : null}
+                                </div>
+                                <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 6 }}>{recommendation.message}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {message.response.suggestedActions.length ? (
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {message.response.suggestedActions.map((action) => (
+                              <Button key={action.id} variant="secondary" onClick={() => void handleProductionAssistantAction(action)}>
+                                {action.label}
+                              </Button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </Card>
+                ))}
               </div>
             </div>
           </PageContainer>
@@ -17146,6 +21708,20 @@ function App() {
                   }}
                 />
                 <button
+                  onClick={() => void importPdfFromDesktopPicker()}
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid #444",
+                    background: "#2f3136",
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: 12
+                  }}
+                >
+                  Browse PDF
+                </button>
+                <button
                   onClick={toggleSelectAllPdfReaderParts}
                   disabled={pdfReaderParts.length === 0}
                   style={{
@@ -17718,6 +22294,22 @@ function App() {
                         }}
                         style={{ width: 92, fontSize: 10 }}
                       />
+                      <button
+                        type="button"
+                        onClick={() => void uploadQuotePartDxfFromDesktopPicker(index)}
+                        style={{
+                          width: 92,
+                          padding: "5px 6px",
+                          borderRadius: 6,
+                          border: "1px solid #444",
+                          background: "#2f3136",
+                          color: "white",
+                          cursor: "pointer",
+                          fontSize: 10
+                        }}
+                      >
+                        Browse DXF
+                      </button>
                       <div
                         style={{
                           width: 92,
@@ -20354,12 +24946,7 @@ function App() {
                 }}
               >
                 <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid rgba(140,170,210,0.18)", background: "linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "112px minmax(220px, 1fr) 120px", alignItems: "center", gap: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ width: 14, height: 14, borderRadius: "50%", background: "#fb5f57", boxShadow: "0 0 0 1px rgba(0,0,0,0.18)" }} />
-                      <span style={{ width: 14, height: 14, borderRadius: "50%", background: "#fdbc2e", boxShadow: "0 0 0 1px rgba(0,0,0,0.18)" }} />
-                      <span style={{ width: 14, height: 14, borderRadius: "50%", background: "#28c840", boxShadow: "0 0 0 1px rgba(0,0,0,0.18)" }} />
-                    </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) 120px", alignItems: "center", gap: 12 }}>
                     <div style={{ display: "flex", justifyContent: "center" }}>
                       <div style={{ width: "100%", maxWidth: 420, display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 16, background: "rgba(12, 23, 37, 0.62)", border: "1px solid rgba(132, 166, 215, 0.14)", color: "rgba(232,240,252,0.92)" }}>
                         <span style={{ fontSize: 18, opacity: 0.82 }}>⌕</span>
@@ -20390,70 +24977,10 @@ function App() {
                     >
                       New Email
                     </button>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", color: "rgba(231,236,245,0.8)", fontSize: 13 }}>
-                      <span>Delete</span>
-                      <span>Archive</span>
-                      <span>Move</span>
-                      <span>Mark as Unread</span>
-                      <button
-                        onClick={() => {
-                          void startMicrosoftEmailSignIn();
-                        }}
-                        disabled={graphEmailAuthBusy}
-                        style={{
-                          padding: "0 0 0 0",
-                          border: "none",
-                          background: "transparent",
-                          color: isUsingGraphEmail ? "#93c5fd" : "rgba(231,236,245,0.84)",
-                          cursor: graphEmailAuthBusy ? "not-allowed" : "pointer",
-                          fontSize: 13
-                        }}
-                      >
-                        {isUsingGraphEmail ? `Outlook: ${graphEmailAccountEmail || "Connected"}` : (graphEmailAuthBusy ? "Connecting..." : "Connect Outlook")}
-                      </button>
-                      <button
-                        onClick={() => {
-                          void refreshInboxEmails();
-                        }}
-                        disabled={inboxLoading || graphEmailSyncing}
-                        style={{
-                          padding: "0 0 0 0",
-                          border: "none",
-                          background: "transparent",
-                          color: "rgba(231,236,245,0.84)",
-                          cursor: inboxLoading || graphEmailSyncing ? "not-allowed" : "pointer",
-                          fontSize: 13
-                        }}
-                      >
-                        {inboxLoading || graphEmailSyncing ? "Syncing..." : "Sync"}
-                      </button>
-                    </div>
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "56px 280px 380px minmax(0, 1fr)", gap: 0, minHeight: 760 }}>
-                  <div style={{ background: "linear-gradient(180deg, rgba(10,21,34,0.72) 0%, rgba(14,25,42,0.88) 100%)", borderRight: "1px solid rgba(117, 146, 190, 0.14)", padding: "16px 10px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
-                    {["🌐", "✉", "🗓", "👥", "☆", "⋯"].map((icon, index) => (
-                      <div
-                        key={`email-rail-${index}`}
-                        style={{
-                          width: 38,
-                          height: 38,
-                          borderRadius: 12,
-                          background: index === 1 ? "linear-gradient(180deg, #2f79ec 0%, #215ec3 100%)" : "rgba(255,255,255,0.06)",
-                          border: "1px solid rgba(136, 170, 214, 0.16)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 16,
-                          boxShadow: index === 1 ? "0 8px 20px rgba(47,121,236,0.26)" : "none"
-                        }}
-                      >
-                        {icon}
-                      </div>
-                    ))}
-                  </div>
-
+                <div style={{ display: "grid", gridTemplateColumns: "280px 380px minmax(0, 1fr)", gap: 0, minHeight: 760 }}>
                   <div style={{ background: "linear-gradient(180deg, rgba(20,31,51,0.96) 0%, rgba(19,29,46,0.98) 100%)", borderRight: "1px solid rgba(117, 146, 190, 0.14)", padding: 16 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "rgba(241,245,250,0.96)" }}>All Accounts</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -21602,26 +26129,65 @@ function App() {
                       </div>
                     ) : null}
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-                      <button onClick={() => {
-                        const material = window.prompt("Material");
-                        if (!material) return;
-                        const thickness = Number(window.prompt("Thickness mm", "1.5"));
-                        const width = Number(window.prompt("Width mm", "3000"));
-                        const height = Number(window.prompt("Height mm", "1500"));
-                        const quantity = Number(window.prompt("Quantity", "1"));
-                        const location = window.prompt("Location", "Rack");
-                        void apiFetch("/api/stock/sheets", { method: "POST", body: JSON.stringify({ material, thickness, width, height, quantity, location, status: "available" }) }).then(() => refreshStock());
-                      }} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(34, 197, 94, 0.34)", background: "rgba(34, 197, 94, 0.16)", color: "white", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Add Sheet</button>
-                      <button onClick={() => {
-                        const material = window.prompt("Material");
-                        if (!material) return;
-                        const thickness = Number(window.prompt("Thickness mm", "1.5"));
-                        const width = Number(window.prompt("Width mm", "600"));
-                        const height = Number(window.prompt("Height mm", "400"));
-                        const location = window.prompt("Location", "Offcut Bin");
-                        void apiFetch("/api/stock/offcuts", { method: "POST", body: JSON.stringify({ material, thickness, width, height, location, status: "available" }) }).then(() => refreshStock());
-                      }} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(59, 130, 246, 0.34)", background: "rgba(59, 130, 246, 0.16)", color: "white", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Add Offcut</button>
+                      <button
+                        onClick={() => {
+                          setStockAddMode("sheet");
+                          setStockAddForm((current) => ({ ...current, width: current.width || "3000", height: current.height || "1500", quantity: current.quantity || "1", location: current.location || "Rack" }));
+                        }}
+                        style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(34, 197, 94, 0.34)", background: stockAddMode === "sheet" ? "rgba(34, 197, 94, 0.28)" : "rgba(34, 197, 94, 0.16)", color: "white", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                      >
+                        Add Sheet
+                      </button>
+                      <button
+                        onClick={() => {
+                          setStockAddMode("offcut");
+                          setStockAddForm((current) => ({ ...current, width: "600", height: "400", quantity: "1", location: current.location || "Offcut Bin" }));
+                        }}
+                        style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(59, 130, 246, 0.34)", background: stockAddMode === "offcut" ? "rgba(59, 130, 246, 0.28)" : "rgba(59, 130, 246, 0.16)", color: "white", cursor: "pointer", fontSize: 12, fontWeight: 700 }}
+                      >
+                        Add Offcut
+                      </button>
                     </div>
+                    {stockAddMode ? (
+                      <div style={{ padding: 12, borderRadius: 14, background: "rgba(15, 23, 42, 0.72)", border: "1px solid rgba(99, 102, 241, 0.16)", marginBottom: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10 }}>
+                          <div style={{ fontWeight: 800 }}>{stockAddMode === "sheet" ? "New Full Sheet" : "New Offcut"}</div>
+                          <button onClick={() => setStockAddMode(null)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid rgba(148, 163, 184, 0.2)", background: "rgba(148, 163, 184, 0.12)", color: "white", cursor: "pointer", fontSize: 12 }}>
+                            Cancel
+                          </button>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                          <select value={stockAddForm.material} onChange={(e) => setStockAddForm((current) => ({ ...current, material: e.target.value }))} style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }}>
+                            {quoteMaterialOptions.map((material) => (
+                              <option key={material} value={material}>{material}</option>
+                            ))}
+                          </select>
+                          <select value={stockAddForm.thickness} onChange={(e) => setStockAddForm((current) => ({ ...current, thickness: e.target.value }))} style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }}>
+                            {JOB_DXF_THICKNESS_OPTIONS.map((value) => (
+                              <option key={value} value={String(value)}>{value} mm</option>
+                            ))}
+                          </select>
+                          <input value={stockAddForm.width} onChange={(e) => setStockAddForm((current) => ({ ...current, width: e.target.value }))} placeholder="Width mm" inputMode="decimal" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                          <input value={stockAddForm.height} onChange={(e) => setStockAddForm((current) => ({ ...current, height: e.target.value }))} placeholder="Height mm" inputMode="decimal" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                          {stockAddMode === "sheet" ? (
+                            <>
+                              <input value={stockAddForm.quantity} onChange={(e) => setStockAddForm((current) => ({ ...current, quantity: e.target.value }))} placeholder="Quantity" inputMode="numeric" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                              <input value={stockAddForm.supplier} onChange={(e) => setStockAddForm((current) => ({ ...current, supplier: e.target.value }))} placeholder="Supplier" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                              <input value={stockAddForm.costPerSheet} onChange={(e) => setStockAddForm((current) => ({ ...current, costPerSheet: e.target.value }))} placeholder="Cost per sheet" inputMode="decimal" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                            </>
+                          ) : null}
+                          <input value={stockAddForm.location} onChange={(e) => setStockAddForm((current) => ({ ...current, location: e.target.value }))} placeholder="Location" style={{ minWidth: 0, padding: 10, borderRadius: 10, border: "1px solid rgba(99, 102, 241, 0.24)", background: "#111827", color: "white" }} />
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 10, alignItems: "center" }}>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                            Estimated weight: {calculatePlateWeightKg(stockAddForm.material, Number(stockAddForm.thickness), Number(stockAddForm.width), Number(stockAddForm.height), stockAddMode === "sheet" ? Number(stockAddForm.quantity) || 1 : 1).toFixed(1)} kg
+                          </div>
+                          <button onClick={() => void saveStockItem(stockAddMode)} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(34, 197, 94, 0.34)", background: "rgba(34, 197, 94, 0.2)", color: "white", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                            Save {stockAddMode === "sheet" ? "Sheet" : "Offcut"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                     {stockLoading ? (
                       <div style={{ fontSize: 13, opacity: 0.7 }}>Loading stock...</div>
                     ) : (
@@ -21635,6 +26201,7 @@ function App() {
                                   <div>
                                     <div style={{ fontWeight: 700 }}>{sheet.material} {sheet.thickness}mm</div>
                                     <div style={{ fontSize: 12, opacity: 0.8 }}>{sheet.width} x {sheet.height} · Qty {sheet.quantity}</div>
+                                    <div style={{ fontSize: 12, opacity: 0.8 }}>Weight {calculatePlateWeightKg(sheet.material, sheet.thickness, sheet.width, sheet.height, sheet.quantity).toFixed(1)} kg</div>
                                     <div style={{ fontSize: 12, opacity: 0.7 }}>{sheet.location ?? "No location"} · {sheet.supplier ?? "No supplier"}</div>
                                   </div>
                                   <div style={{ textAlign: "right", fontSize: 12 }}>
@@ -21656,6 +26223,7 @@ function App() {
                                   <div>
                                     <div style={{ fontWeight: 700 }}>{offcut.material} {offcut.thickness}mm</div>
                                     <div style={{ fontSize: 12, opacity: 0.8 }}>{offcut.width} x {offcut.height} · Area {offcut.usableArea.toFixed(0)} mm²</div>
+                                    <div style={{ fontSize: 12, opacity: 0.8 }}>Weight {calculatePlateWeightKg(offcut.material, offcut.thickness, offcut.width, offcut.height).toFixed(1)} kg</div>
                                     <div style={{ fontSize: 12, opacity: 0.7 }}>{offcut.location ?? "No location"} · {offcut.status}</div>
                                   </div>
                                   <button onClick={() => {
@@ -21679,6 +26247,24 @@ function App() {
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ background: "rgba(255,255,255,0.028)", borderRadius: 18, padding: 16, border: "1px solid rgba(99, 102, 241, 0.16)" }}>
+                    <div style={{ fontWeight: 800, marginBottom: 8 }}>Rack Weights</div>
+                    {visibleRackWeights.length === 0 ? (
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>No rack weight to show for the current filters.</div>
+                    ) : (
+                      <div style={{ display: "grid", gap: 8 }}>
+                        {visibleRackWeights.map((rack) => (
+                          <div key={rack.location} style={{ padding: 10, borderRadius: 10, background: "rgba(15, 23, 42, 0.72)", border: "1px solid rgba(99, 102, 241, 0.16)", display: "flex", justifyContent: "space-between", gap: 12 }}>
+                            <div>
+                              <div style={{ fontWeight: 700 }}>{rack.location}</div>
+                              <div style={{ fontSize: 12, opacity: 0.7 }}>{rack.itemCount} stock item{rack.itemCount === 1 ? "" : "s"}</div>
+                            </div>
+                            <div style={{ fontWeight: 800 }}>{rack.totalKg.toFixed(1)} kg</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ background: "rgba(255,255,255,0.028)", borderRadius: 18, padding: 16, border: "1px solid rgba(99, 102, 241, 0.16)" }}>
                     <div style={{ fontWeight: 800, marginBottom: 8 }}>Low Stock Warnings</div>
                     {filteredStockWarnings.length === 0 ? (
@@ -22439,4 +27025,53 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+class RootErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[renderer] uncaught render error", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: "100vh", background: "#111318", color: "white", padding: 24, fontFamily: "Inter, sans-serif" }}>
+          <div style={{ maxWidth: 960, margin: "0 auto", display: "grid", gap: 16 }}>
+            <div style={{ fontSize: 28, fontWeight: 800 }}>Qouter X Renderer Error</div>
+            <div style={{ fontSize: 14, color: "#cbd5e1" }}>
+              The UI hit a runtime error instead of loading a blank screen.
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                padding: 16,
+                borderRadius: 16,
+                background: "#020617",
+                border: "1px solid rgba(148, 163, 184, 0.22)",
+                color: "#fca5a5",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word"
+              }}
+            >
+              {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+            </pre>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+createRoot(document.getElementById("root")!).render(
+  <RootErrorBoundary>
+    <App />
+  </RootErrorBoundary>
+);
