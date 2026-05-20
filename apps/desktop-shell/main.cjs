@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const net = require("node:net");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -240,7 +241,15 @@ function hasAutoUpdater() {
 
 function isApiReachable(baseUrl = getLocalApiBaseUrl()) {
   return new Promise((resolve) => {
-    const req = http.get(getApiHealthUrl(baseUrl), (res) => {
+    let healthUrl;
+    try {
+      healthUrl = new URL(getApiHealthUrl(baseUrl));
+    } catch {
+      resolve(false);
+      return;
+    }
+    const client = healthUrl.protocol === "https:" ? https : http;
+    const req = client.get(healthUrl, (res) => {
       res.resume();
       resolve(Boolean(res.statusCode && res.statusCode >= 200 && res.statusCode < 500));
     });
