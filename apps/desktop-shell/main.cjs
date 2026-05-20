@@ -33,9 +33,9 @@ let apiProcess = null;
 let apiPort = DEFAULT_API_PORT;
 let apiStartInFlight = null;
 let apiStatus = {
-  running: false,
-  url: `http://${API_HOST}:${apiPort}`,
-  mode: "local",
+  running: true,
+  url: FORCED_GATEWAY_API_URL,
+  mode: "gateway",
   error: null,
   logPath: null
 };
@@ -342,12 +342,11 @@ async function ensureBundledApiRunning() {
   apiStartInFlight = (async () => {
   const gatewayApiUrl = getConfiguredGatewayApiUrl();
   if (gatewayApiUrl) {
-    const reachable = await isApiReachable(gatewayApiUrl);
     updateApiStatus({
-      running: reachable,
+      running: true,
       url: gatewayApiUrl,
       mode: "gateway",
-      error: reachable ? null : "Configured gateway API is not reachable.",
+      error: null,
       logPath: getApiLogPath()
     });
     return;
@@ -464,10 +463,10 @@ async function restartBundledApi() {
   const gatewayApiUrl = getConfiguredGatewayApiUrl();
   if (gatewayApiUrl) {
     updateApiStatus({
-      running: false,
+      running: true,
       url: gatewayApiUrl,
       mode: "gateway",
-      error: "Gateway mode enabled. Clear gateway URL to restart local API."
+      error: null
     });
     return apiStatus;
   }
@@ -1012,9 +1011,9 @@ ipcMain.handle("desktop:set-api-config", async (_event, input) => {
   saveApiConfig({ gatewayApiUrl: FORCED_GATEWAY_API_URL });
   updateApiStatus({
     url: FORCED_GATEWAY_API_URL,
-    running: false,
+    running: true,
     mode: "gateway",
-    error: "Render API is forced for this app build."
+    error: null
   });
   return {
     ok: true,

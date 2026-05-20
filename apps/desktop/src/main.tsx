@@ -15367,9 +15367,15 @@ function App() {
                   border: "1px solid rgba(248, 113, 113, 0.35)"
                 }}
               >
-                <SectionHeader title="Local API Not Running" subtitle={`Current API URL: ${effectiveApiUrl}`} />
+                <SectionHeader
+                  title={apiRuntimeStatus.mode === "gateway" ? "Render API Not Reachable" : "Local API Not Running"}
+                  subtitle={`Current API URL: ${effectiveApiUrl}`}
+                />
                 <div style={{ fontSize: 12, lineHeight: 1.5, color: "#fca5a5" }}>
-                  {apiRuntimeStatus.error ?? "The packaged backend did not start."}
+                  {apiRuntimeStatus.error ??
+                    (apiRuntimeStatus.mode === "gateway"
+                      ? "The public Render API could not be reached."
+                      : "The packaged backend did not start.")}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Button
