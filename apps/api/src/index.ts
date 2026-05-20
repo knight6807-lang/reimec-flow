@@ -4904,26 +4904,26 @@ async function writeQuotePdf(
     quote.companyDetails?.registrationNumber ? `Reg: ${quote.companyDetails.registrationNumber}` : undefined
   ].filter((line): line is string => Boolean(line && line.trim()));
 
-  let customerY = 142;
-  doc.fillColor(accent).fontSize(11).text("Customer Details", left, customerY);
-  customerY += 14;
-  customerLines.forEach((lineText) => {
-    doc.fillColor(textPrimary).fontSize(9).text(lineText, left, customerY, { width: 255 });
-    customerY += 12;
-  });
-
   let companyY = 142;
-  doc.fillColor(accent).fontSize(11).text("Company Details", 312, companyY, { width: 238, align: "right" });
+  doc.fillColor(accent).fontSize(11).text("Company Details", left, companyY);
   companyY += 14;
   if (companyLines.length === 0) {
-    doc.fillColor(accentMid).fontSize(9).text("No company details provided.", 312, companyY, { width: 238, align: "right" });
+    doc.fillColor(accentMid).fontSize(9).text("No company details provided.", left, companyY, { width: 255 });
     companyY += 12;
   } else {
     companyLines.forEach((lineText) => {
-      doc.fillColor(textPrimary).fontSize(9).text(lineText, 312, companyY, { width: 238, align: "right" });
+      doc.fillColor(textPrimary).fontSize(9).text(lineText, left, companyY, { width: 255 });
       companyY += 12;
     });
   }
+
+  let customerY = 142;
+  doc.fillColor(accent).fontSize(11).text("Customer Details", 312, customerY, { width: 238, align: "right" });
+  customerY += 14;
+  customerLines.forEach((lineText) => {
+    doc.fillColor(textPrimary).fontSize(9).text(lineText, 312, customerY, { width: 238, align: "right" });
+    customerY += 12;
+  });
 
   const sectionY = Math.max(customerY, companyY) + 14;
   doc.fillColor(accent).fontSize(12).text("Section Summary", left, sectionY);
