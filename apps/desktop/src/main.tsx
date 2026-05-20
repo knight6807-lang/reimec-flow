@@ -15359,7 +15359,7 @@ function App() {
               </>
             ) : null}
             {authError ? <div style={{ color: "#f87171", fontSize: 12 }}>{authError}</div> : null}
-            {apiRuntimeStatus.packaged && apiRuntimeStatus.running === false ? (
+            {apiRuntimeStatus.packaged && apiRuntimeStatus.running === false && apiRuntimeStatus.mode !== "gateway" ? (
               <Card
                 compact
                 style={{
