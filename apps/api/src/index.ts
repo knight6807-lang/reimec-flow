@@ -691,6 +691,17 @@ function getLocalBillingUser(email: string, password: string) {
   return user;
 }
 
+function getOwnerLoginFailureMessage(email: string, password: string) {
+  if (email.trim().toLowerCase() !== APP_OWNER_EMAIL) return "invalid credentials";
+  if (!APP_OWNER_PASSWORD) {
+    return "Owner password is not configured on Render. Set APP_OWNER_PASSWORD on qouterx-api and redeploy.";
+  }
+  if (password !== APP_OWNER_PASSWORD) {
+    return "Owner password does not match APP_OWNER_PASSWORD on Render.";
+  }
+  return "invalid owner credentials";
+}
+
 function ensureAppOwnerBootstrap(email: string, password: string) {
   if (email.trim().toLowerCase() !== APP_OWNER_EMAIL) return getUserByEmail(email);
   let user = getUserByEmail(email);
@@ -5293,7 +5304,7 @@ app.post("/api/auth/login", (req, res) => {
   }
   const user = ensureAppOwnerBootstrap(email, password);
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
-    res.status(401).json({ error: "invalid credentials" });
+    res.status(401).json({ error: getOwnerLoginFailureMessage(email, password) });
     return;
   }
   ensureUserAccountRef(user);
