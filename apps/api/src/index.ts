@@ -184,6 +184,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? "";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? "";
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID ?? "";
 const APP_OWNER_EMAIL = (process.env.APP_OWNER_EMAIL ?? "knight6807@gmail.com").trim().toLowerCase();
+const APP_OWNER_PASSWORD = process.env.APP_OWNER_PASSWORD?.trim() || null;
 const PAYMENT_LINK_TEMPLATE = process.env.PAYMENT_LINK_TEMPLATE?.trim() ?? "";
 const PAYMENT_BANK_NAME = process.env.PAYMENT_BANK_NAME?.trim() ?? "";
 const PAYMENT_ACCOUNT_NAME = process.env.PAYMENT_ACCOUNT_NAME?.trim() ?? "";
@@ -680,7 +681,10 @@ function getStripeInvoiceWorkspaceId(invoice: Stripe.Invoice) {
 }
 
 function getLocalBillingUser(email: string, password: string) {
-  const user = getUserByEmail(email);
+  const user =
+    email.trim().toLowerCase() === APP_OWNER_EMAIL
+      ? ensureAppOwnerBootstrap(email, password)
+      : getUserByEmail(email);
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
     return null;
   }
@@ -690,6 +694,7 @@ function getLocalBillingUser(email: string, password: string) {
 function ensureAppOwnerBootstrap(email: string, password: string) {
   if (email.trim().toLowerCase() !== APP_OWNER_EMAIL) return getUserByEmail(email);
   let user = getUserByEmail(email);
+  const passwordMatchesOwnerEnv = Boolean(APP_OWNER_PASSWORD && password === APP_OWNER_PASSWORD);
   if (!user) {
     user = {
       id: `user-${crypto.randomUUID()}`,
@@ -703,7 +708,7 @@ function ensureAppOwnerBootstrap(email: string, password: string) {
       createdAt: new Date().toISOString()
     };
     upsertUser(user);
-  } else if (!user.passwordHash) {
+  } else if (!user.passwordHash || passwordMatchesOwnerEnv) {
     user.passwordHash = hashPassword(password);
     user.ownerLocked = false;
     if (!user.provider) user.provider = "local";
