@@ -17,6 +17,7 @@ const DEV_URL = process.env.DESKTOP_URL || "http://localhost:5173";
 const APP_TITLE = "Qouter X";
 const WINDOW_ICON_PATH = path.join(__dirname, "build", "icon.png");
 const PACKAGED_RENDERER_ENTRY = path.join(__dirname, "renderer", "index.html");
+const FORCED_GATEWAY_API_URL = "https://qouterx-api.onrender.com";
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_API_PORT = Number(process.env.PORT ?? 3001);
 const API_HOST = "127.0.0.1";
@@ -213,11 +214,11 @@ function saveApiConfig(config) {
 }
 
 function getConfiguredGatewayApiUrl() {
-  return normalizeGatewayApiUrl(loadApiConfig().gatewayApiUrl);
+  return FORCED_GATEWAY_API_URL;
 }
 
 function getActiveApiBaseUrl() {
-  return getConfiguredGatewayApiUrl() ?? getLocalApiBaseUrl();
+  return FORCED_GATEWAY_API_URL;
 }
 
 function getApiHealthUrl(baseUrl) {
@@ -990,30 +991,27 @@ ipcMain.handle("desktop:get-api-base-url", async () => {
 });
 
 ipcMain.handle("desktop:get-api-config", async () => {
-  const config = loadApiConfig();
   return {
     ok: true,
-    gatewayApiUrl: config.gatewayApiUrl ?? null,
-    activeApiUrl: getActiveApiBaseUrl()
+    gatewayApiUrl: FORCED_GATEWAY_API_URL,
+    activeApiUrl: FORCED_GATEWAY_API_URL,
+    forced: true
   };
 });
 
 ipcMain.handle("desktop:set-api-config", async (_event, input) => {
-  const nextUrl = normalizeGatewayApiUrl(input?.gatewayApiUrl ?? null);
-  if (input?.gatewayApiUrl && !nextUrl) {
-    return { ok: false, error: "Gateway URL must be a valid http:// or https:// address." };
-  }
-  saveApiConfig({ gatewayApiUrl: nextUrl });
+  saveApiConfig({ gatewayApiUrl: FORCED_GATEWAY_API_URL });
   updateApiStatus({
-    url: getActiveApiBaseUrl(),
+    url: FORCED_GATEWAY_API_URL,
     running: false,
-    mode: nextUrl ? "gateway" : "local",
-    error: nextUrl ? "Gateway saved. Restart app to switch traffic to the hosted server." : "Gateway cleared. Restart app to use the local API again."
+    mode: "gateway",
+    error: "Render API is forced for this app build."
   });
   return {
     ok: true,
-    gatewayApiUrl: nextUrl,
-    activeApiUrl: getActiveApiBaseUrl()
+    gatewayApiUrl: FORCED_GATEWAY_API_URL,
+    activeApiUrl: FORCED_GATEWAY_API_URL,
+    forced: true
   };
 });
 

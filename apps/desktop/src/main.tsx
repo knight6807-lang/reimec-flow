@@ -1415,17 +1415,11 @@ type ParsedPurchaseOrderInsights = {
 };
 
 const DESKTOP_GATEWAY_API_URL_KEY = "qouterx.gatewayApiUrl";
-const DEFAULT_API_URL =
-  import.meta.env.VITE_API_URL ??
-  (window.location.protocol === "file:" ? "http://127.0.0.1:3001" : "http://localhost:3001");
+const FORCED_API_URL = "https://qouterx-api.onrender.com";
+const DEFAULT_API_URL = FORCED_API_URL;
 
 function getStoredGatewayApiUrl() {
-  try {
-    const value = window.localStorage.getItem(DESKTOP_GATEWAY_API_URL_KEY)?.trim();
-    return value || null;
-  } catch {
-    return null;
-  }
+  return FORCED_API_URL;
 }
 
 function buildApiUrlCandidates(baseUrl: string) {
