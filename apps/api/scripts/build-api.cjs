@@ -6,10 +6,16 @@ const packageRoot = path.resolve(__dirname, "..");
 const sourceDir = path.join(packageRoot, "src");
 const outdir = path.join(packageRoot, "dist");
 
-const entryPoints = fs
-  .readdirSync(sourceDir)
-  .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
-  .map((name) => path.join(sourceDir, name));
+function collectEntryPoints(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return collectEntryPoints(entryPath);
+    if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) return [];
+    return [entryPath];
+  });
+}
+
+const entryPoints = collectEntryPoints(sourceDir);
 
 fs.rmSync(outdir, { recursive: true, force: true });
 
