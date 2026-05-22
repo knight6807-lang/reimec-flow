@@ -1,6 +1,6 @@
 {
   "name": "qouter-x",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "Qouter X desktop application",
   "author": "Qouter X",
@@ -10,13 +10,14 @@
     "dev": "node scripts/run-electron.cjs",
     "start": "node scripts/run-electron.cjs",
     "build:renderer": "npm --prefix ../desktop run build && node scripts/prepare-renderer.cjs && node scripts/prepare-api.cjs && node scripts/prepare-assets.cjs",
-    "build": "npm run build:renderer && node scripts/run-builder.cjs --dir",
-    "dist": "npm run build:renderer && node scripts/run-builder.cjs",
-    "dist:win": "npm run build:renderer && node scripts/run-builder.cjs --win",
-    "dist:mac": "npm run build:renderer && node scripts/run-builder.cjs --mac",
-    "publish": "npm run build:renderer && node scripts/run-builder.cjs --publish always",
-    "build:mac": "npm run build:renderer && node scripts/run-builder.cjs --mac",
-    "build:win": "npm run build:renderer && node scripts/run-builder.cjs --win"
+    "prepare:app-deps": "npm ci --workspaces=false",
+    "build": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --dir",
+    "dist": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs",
+    "dist:win": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --win",
+    "dist:mac": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --mac",
+    "publish": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --publish always",
+    "build:mac": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --mac",
+    "build:win": "npm run build:renderer && npm run prepare:app-deps && node scripts/run-builder.cjs --win"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -69,7 +70,7 @@
     "extraMetadata": {
       "name": "qouter-x",
       "productName": "Qouter X",
-      "version": "1.0.3"
+      "version": "1.0.4"
     },
     "mac": {
       "icon": "build/icon.icns",
