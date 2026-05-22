@@ -1,6 +1,6 @@
 {
   "name": "qouter-x",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "private": true,
   "description": "Qouter X desktop application",
   "author": "Qouter X",
@@ -69,7 +69,7 @@
     "extraMetadata": {
       "name": "qouter-x",
       "productName": "Qouter X",
-      "version": "1.0.1"
+      "version": "1.0.3"
     },
     "mac": {
       "icon": "build/icon.icns",
@@ -87,7 +87,7 @@
     },
     "win": {
       "icon": "build/icon.ico",
-      "artifactName": "Qouter X Setup.${ext}",
+      "artifactName": "Qouter-X-Setup.${ext}",
       "target": [
         {
           "target": "nsis",
@@ -100,13 +100,14 @@
       ]
     },
     "dmg": {
-      "artifactName": "Qouter X-${arch}.${ext}"
+      "artifactName": "Qouter-X-${arch}.${ext}"
     },
     "publish": [
       {
         "provider": "github",
-        "owner": "${env.GH_OWNER}",
-        "repo": "${env.GH_REPO}"
+        "owner": "knight6807-lang",
+        "repo": "reimec-flow",
+        "releaseType": "release"
       }
     ],
     "nsis": {
