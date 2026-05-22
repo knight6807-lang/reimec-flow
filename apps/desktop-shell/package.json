@@ -1,6 +1,6 @@
 {
   "name": "qouter-x",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "Qouter X desktop application",
   "author": "Qouter X",
@@ -70,7 +70,7 @@
     "extraMetadata": {
       "name": "qouter-x",
       "productName": "Qouter X",
-      "version": "1.0.4"
+      "version": "1.0.5"
     },
     "mac": {
       "icon": "build/icon.icns",
@@ -107,7 +107,7 @@
       {
         "provider": "github",
         "owner": "knight6807-lang",
-        "repo": "reimec-flow",
+        "repo": "qouter-x-updates",
         "releaseType": "release"
       }
     ],

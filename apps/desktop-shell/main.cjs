@@ -146,7 +146,7 @@ function isUpdaterConfigured() {
 function simplifyUpdaterErrorMessage(error) {
   const raw = error instanceof Error ? error.message : String(error ?? "");
   if (!raw) return "Update check failed.";
-  if (raw.includes("github.com/local/qouter-x") || raw.includes("releases.atom")) {
+  if (raw.includes("github.com/local/qouter-x")) {
     return "Auto updates are not configured for this build yet.";
   }
   const firstLine = raw.split("\n")[0]?.trim();

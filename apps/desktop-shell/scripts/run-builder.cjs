@@ -4,7 +4,7 @@ const args = process.argv.slice(2);
 const env = {
   ...process.env,
   GH_OWNER: process.env.GH_OWNER || "knight6807-lang",
-  GH_REPO: process.env.GH_REPO || "reimec-flow"
+  GH_REPO: process.env.GH_REPO || "qouter-x-updates"
 };
 
 const result = spawnSync("electron-builder", args, {
