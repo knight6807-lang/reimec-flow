@@ -198,6 +198,8 @@ type JobRecord = {
     segmentCount: number;
     thumbnailDataUrl?: string;
     printDataUrl?: string;
+    sourceSegments?: DxfSegment[];
+    sourceBounds?: DxfBounds;
   }>;
   createdAt: string;
 };
@@ -6544,7 +6546,9 @@ function App() {
       pierceCount: part.pierceCount,
       segmentCount: part.segmentCount,
       thumbnailDataUrl: part.thumbnailDataUrl,
-      printDataUrl: part.printDataUrl
+      printDataUrl: part.printDataUrl,
+      sourceSegments: part.sourceSegments,
+      sourceBounds: part.sourceBounds
     }));
     setJobDxfParts(saved);
     setJobDxfSourceFiles(
@@ -9930,7 +9934,9 @@ function App() {
       pierceCount: part.pierceCount,
       segmentCount: part.segmentCount,
       thumbnailDataUrl: part.thumbnailDataUrl,
-      printDataUrl: part.printDataUrl
+      printDataUrl: part.printDataUrl,
+      sourceSegments: part.sourceSegments,
+      sourceBounds: part.sourceBounds
     }));
     const res = await apiFetch(`/api/workspaces/${workspaceId}/jobs`, {
       method: "POST",
@@ -11817,6 +11823,10 @@ function App() {
       const payloadParts = jobDxfParts.map((part) => ({
         id: part.id,
         name: part.name,
+        partCode: part.partCode,
+        partDnaId: part.partDnaId,
+        geometryHash: part.geometryHash,
+        softHash: part.softHash,
         layer: part.layer,
         material: part.material ?? "Mild Steel",
         thicknessMm: normalizeJobDxfThickness(part.thicknessMm),
@@ -11827,7 +11837,9 @@ function App() {
         pierceCount: part.pierceCount,
         segmentCount: part.segmentCount,
         thumbnailDataUrl: part.thumbnailDataUrl,
-        printDataUrl: part.printDataUrl
+        printDataUrl: part.printDataUrl,
+        sourceSegments: part.sourceSegments,
+        sourceBounds: part.sourceBounds
       }));
       const res = await apiFetch(`/api/workspaces/${workspaceId}/jobs/${selectedJobId}`, {
         method: "PATCH",

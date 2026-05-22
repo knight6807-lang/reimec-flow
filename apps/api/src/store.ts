@@ -166,6 +166,20 @@ export type JobRecord = {
     segmentCount: number;
     thumbnailDataUrl?: string;
     printDataUrl?: string;
+    sourceSegments?: Array<{
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      layer: string;
+      entityId: string;
+    }>;
+    sourceBounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
   }>;
   jobCardPath?: string;
   createdAt: string;

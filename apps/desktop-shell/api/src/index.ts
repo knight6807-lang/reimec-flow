@@ -2066,6 +2066,10 @@ function formatRand(value?: number | null) {
 
 function parseIncomingJobDxfPart(part: unknown) {
   const source = part as Record<string, unknown>;
+  const sourceSegments = Array.isArray(source.sourceSegments)
+    ? source.sourceSegments.map(parseIncomingJobDxfSegment).filter((segment): segment is NonNullable<ReturnType<typeof parseIncomingJobDxfSegment>> => Boolean(segment))
+    : [];
+  const sourceBounds = parseIncomingJobDxfBounds(source.sourceBounds);
   return {
     id:
       typeof source.id === "string" && source.id.trim()
@@ -2087,11 +2091,40 @@ function parseIncomingJobDxfPart(part: unknown) {
     segmentCount: Math.max(0, Math.round(Number(source.segmentCount) || 0)),
     thumbnailDataUrl:
       typeof source.thumbnailDataUrl === "string" ? source.thumbnailDataUrl : undefined,
-    printDataUrl: typeof source.printDataUrl === "string" ? source.printDataUrl : undefined
+    printDataUrl: typeof source.printDataUrl === "string" ? source.printDataUrl : undefined,
+    sourceSegments: sourceSegments.length ? sourceSegments : undefined,
+    sourceBounds: sourceBounds ?? undefined
   };
 }
 
 type XYPoint = { x: number; y: number };
+
+function parseIncomingJobDxfSegment(segment: unknown) {
+  const source = segment as Record<string, unknown>;
+  const x1 = Number(source.x1);
+  const y1 = Number(source.y1);
+  const x2 = Number(source.x2);
+  const y2 = Number(source.y2);
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+  return {
+    x1,
+    y1,
+    x2,
+    y2,
+    layer: typeof source.layer === "string" && source.layer.trim() ? source.layer.trim() : "0",
+    entityId: typeof source.entityId === "string" && source.entityId.trim() ? source.entityId.trim() : `segment-${crypto.randomUUID()}`
+  };
+}
+
+function parseIncomingJobDxfBounds(bounds: unknown) {
+  const source = bounds as Record<string, unknown>;
+  const minX = Number(source?.minX);
+  const minY = Number(source?.minY);
+  const maxX = Number(source?.maxX);
+  const maxY = Number(source?.maxY);
+  if (![minX, minY, maxX, maxY].every(Number.isFinite) || maxX < minX || maxY < minY) return null;
+  return { minX, minY, maxX, maxY };
+}
 
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -6174,6 +6207,9 @@ app.post("/api/jobs", async (req, res) => {
   const partDnaId = typeof req.body?.partDnaId === "number" && Number.isFinite(req.body.partDnaId) ? req.body.partDnaId : null;
   const priority = req.body?.priority === "low" || req.body?.priority === "urgent" ? req.body.priority : "normal";
   const manuallyMarkedReady = req.body?.manuallyMarkedReady === true;
+  const incomingJobDxfParts = Array.isArray(req.body?.jobDxfParts)
+    ? req.body.jobDxfParts.map(parseIncomingJobDxfPart).filter((part: { name: string }) => part.name.length > 0)
+    : [];
 
   const jobFolder = getActiveJobFolder(jobNumber, customerName);
   const customerFolder = customerName ? getCustomerFolder(customerName) : undefined;
@@ -6189,7 +6225,7 @@ app.post("/api/jobs", async (req, res) => {
     customerFolder,
     jobFolder,
     fileLinks: [],
-    jobDxfParts: [],
+    jobDxfParts: incomingJobDxfParts,
     jobCardPath,
     createdAt: new Date().toISOString()
   };
