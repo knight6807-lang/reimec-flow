@@ -1,6 +1,6 @@
 {
   "name": "qouter-x",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "description": "Qouter X desktop application",
   "author": "Qouter X",
@@ -70,8 +70,9 @@
     "extraMetadata": {
       "name": "qouter-x",
       "productName": "Qouter X",
-      "version": "1.0.6"
+      "version": "1.0.7"
     },
+    "afterPack": "scripts/after-pack-mac-sign.cjs",
     "mac": {
       "icon": "build/icon.icns",
       "identity": null,
