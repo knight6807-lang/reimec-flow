@@ -19,6 +19,7 @@ const APP_TITLE = "Qouter X";
 const WINDOW_ICON_PATH = path.join(__dirname, "build", "icon.png");
 const PACKAGED_RENDERER_ENTRY = path.join(__dirname, "renderer", "index.html");
 const FORCED_GATEWAY_API_URL = "https://qouterx-api.onrender.com";
+const QOUTERX_DOWNLOAD_PAGE_URL = "https://qouterx-web.onrender.com/download";
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DEFAULT_API_PORT = Number(process.env.PORT ?? 3001);
 const API_HOST = "127.0.0.1";
@@ -237,6 +238,26 @@ function sendUpdateStatus(patch = {}) {
 
 function hasAutoUpdater() {
   return Boolean(autoUpdater && typeof autoUpdater.checkForUpdates === "function");
+}
+
+async function openManualDownloadPage() {
+  try {
+    await shell.openExternal(QOUTERX_DOWNLOAD_PAGE_URL);
+    sendUpdateStatus({
+      state: "disabled",
+      percent: null,
+      message: "Opened the Qouter X download page in your browser."
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendUpdateStatus({
+      state: "error",
+      percent: null,
+      message: `Could not open the download page: ${message}`
+    });
+    return false;
+  }
 }
 
 function isApiReachable(baseUrl = getLocalApiBaseUrl()) {
@@ -734,23 +755,28 @@ async function checkForUpdates(options = {}) {
   const manual = options && options.manual === true;
   if (!app.isPackaged || updateDownloadInProgress) {
     if (manual) {
+      if (!app.isPackaged) {
+        await openManualDownloadPage();
+        return;
+      }
       sendUpdateStatus({
         state: "error",
-        message: !app.isPackaged ? "Updates are only available in packaged builds." : "Update download already in progress."
+        message: "Update download already in progress."
       });
     }
     return;
   }
   if (!hasAutoUpdater()) {
     if (manual) {
-      sendUpdateStatus({
-        state: "error",
-        message: "Auto update module is unavailable in this build."
-      });
+      await openManualDownloadPage();
     }
     return;
   }
   if (!isUpdaterConfigured()) {
+    if (manual) {
+      await openManualDownloadPage();
+      return;
+    }
     sendUpdateStatus({
       state: "disabled",
       percent: null,
