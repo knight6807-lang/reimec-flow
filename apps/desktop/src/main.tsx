@@ -5,6 +5,11 @@ import { QRCodeCanvas } from "qrcode.react";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
+const QOUTER_X_RELEASE_URL = "https://github.com/knight6807-lang/qouter-x-updates/releases/latest";
+const QOUTER_X_WINDOWS_DOWNLOAD_URL = "https://github.com/knight6807-lang/qouter-x-updates/releases/latest/download/Qouter-X-Setup.exe";
+const QOUTER_X_MAC_ARM64_DOWNLOAD_URL = "https://github.com/knight6807-lang/qouter-x-updates/releases/latest/download/Qouter-X-arm64.dmg";
+const QOUTER_X_MAC_INTEL_DOWNLOAD_URL = "https://github.com/knight6807-lang/qouter-x-updates/releases/latest/download/Qouter-X-x64.dmg";
+
 type ChatMsg = { roomId: string; text: string; user: string };
 
 type SupportMessage = {
@@ -4162,6 +4167,114 @@ function UpdateStatusCard(props: {
         </Button>
       </div>
     </Card>
+  );
+}
+
+function DownloadPage() {
+  const downloads = [
+    {
+      title: "Windows",
+      subtitle: "Installer for Windows PCs.",
+      href: QOUTER_X_WINDOWS_DOWNLOAD_URL,
+      action: "Download Windows"
+    },
+    {
+      title: "Mac Apple Silicon",
+      subtitle: "For M1, M2, M3, and newer Macs.",
+      href: QOUTER_X_MAC_ARM64_DOWNLOAD_URL,
+      action: "Download Mac"
+    },
+    {
+      title: "Mac Intel",
+      subtitle: "For older Intel Macs.",
+      href: QOUTER_X_MAC_INTEL_DOWNLOAD_URL,
+      action: "Download Intel Mac"
+    }
+  ];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#07111f", color: "#e5edf8", fontFamily: "Inter, system-ui, sans-serif" }}>
+      <main style={{ width: "min(1040px, calc(100% - 32px))", margin: "0 auto", padding: "44px 0" }}>
+        <section style={{ display: "grid", gap: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <img src="/qouterx-logo-v2.png" alt="Qouter X" style={{ width: 54, height: 54, borderRadius: 12 }} />
+            <div>
+              <h1 style={{ margin: 0, fontSize: 34, lineHeight: 1.05, letterSpacing: 0 }}>Qouter X Downloads</h1>
+              <p style={{ margin: "8px 0 0", color: "#a9b7cc", fontSize: 15 }}>
+                Install the latest Qouter X build manually.
+              </p>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gap: 14
+            }}
+          >
+            {downloads.map((download) => (
+              <article
+                key={download.title}
+                style={{
+                  background: "#0d1a2b",
+                  border: "1px solid rgba(148, 163, 184, 0.22)",
+                  borderRadius: 8,
+                  padding: 18,
+                  display: "grid",
+                  gap: 12,
+                  minHeight: 178
+                }}
+              >
+                <div>
+                  <h2 style={{ margin: 0, fontSize: 21, letterSpacing: 0 }}>{download.title}</h2>
+                  <p style={{ margin: "8px 0 0", color: "#a9b7cc", lineHeight: 1.45 }}>{download.subtitle}</p>
+                </div>
+                <a
+                  href={download.href}
+                  style={{
+                    alignSelf: "end",
+                    display: "inline-flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    minHeight: 46,
+                    padding: "0 14px",
+                    borderRadius: 6,
+                    background: "#1f7a4d",
+                    color: "#06130c",
+                    textDecoration: "none",
+                    fontWeight: 900
+                  }}
+                >
+                  {download.action}
+                </a>
+              </article>
+            ))}
+          </div>
+
+          <section
+            style={{
+              background: "#0d1a2b",
+              border: "1px solid rgba(148, 163, 184, 0.22)",
+              borderRadius: 8,
+              padding: 18,
+              lineHeight: 1.55,
+              color: "#c7d2e2"
+            }}
+          >
+            <h2 style={{ margin: "0 0 8px", fontSize: 20, letterSpacing: 0 }}>Mac install note</h2>
+            <p style={{ margin: 0 }}>
+              If an older Mac install cannot auto-update, quit Qouter X, open the downloaded DMG, and replace the app in Applications.
+              Future fully automatic Mac updates need a paid Apple Developer ID signature.
+            </p>
+          </section>
+
+          <a href={QOUTER_X_RELEASE_URL} style={{ color: "#93c5fd", fontWeight: 800 }}>
+            View all release files
+          </a>
+        </section>
+      </main>
+    </div>
   );
 }
 
@@ -27084,6 +27197,6 @@ class RootErrorBoundary extends React.Component<
 
 createRoot(document.getElementById("root")!).render(
   <RootErrorBoundary>
-    <App />
+    {["/download", "/downloads"].includes(window.location.pathname) ? <DownloadPage /> : <App />}
   </RootErrorBoundary>
 );
