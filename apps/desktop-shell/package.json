@@ -75,7 +75,6 @@
     "afterPack": "scripts/after-pack-mac-sign.cjs",
     "mac": {
       "icon": "build/icon.icns",
-      "identity": null,
       "category": "public.app-category.business",
       "target": [
         {
