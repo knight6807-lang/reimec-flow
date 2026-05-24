@@ -1422,7 +1422,7 @@ type ParsedPurchaseOrderInsights = {
 };
 
 const DESKTOP_GATEWAY_API_URL_KEY = "qouterx.gatewayApiUrl";
-const FORCED_API_URL = "https://qouterx-api.onrender.com";
+const FORCED_API_URL = import.meta.env.DEV ? "http://127.0.0.1:3001" : "https://qouterx-api.onrender.com";
 const DEFAULT_API_URL = FORCED_API_URL;
 
 function getStoredGatewayApiUrl() {
