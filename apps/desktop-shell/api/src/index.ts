@@ -166,6 +166,10 @@ const corsOriginMatcher = (origin: string | undefined, callback: (error: Error |
     callback(null, true);
     return;
   }
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    callback(null, true);
+    return;
+  }
   callback(null, allowedOrigins.includes(origin));
 };
 const execFileAsync = promisify(execFile);
