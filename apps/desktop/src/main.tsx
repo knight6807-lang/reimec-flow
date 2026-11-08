@@ -4764,6 +4764,12 @@ function App() {
   const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
   const [cloudDashboard, setCloudDashboard] = useState<CompanyDashboardRecord | null>(null);
   const [cloudEvents, setCloudEvents] = useState<CloudSyncEventRecord[]>([]);
+  const [qrStationSearch, setQrStationSearch] = useState("");
+  const [qrQcJobId, setQrQcJobId] = useState<string | null>(null);
+  const [qrQcQuantity, setQrQcQuantity] = useState("");
+  const [qrStatusMessage, setQrStatusMessage] = useState<string | null>(null);
+  const [storageRefreshing, setStorageRefreshing] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [brainEvents, setBrainEvents] = useState<BrainEventRecord[]>([]);
   const [brainRecommendations, setBrainRecommendations] = useState<BrainRecommendationRecord[]>([]);
   const [brainDashboard, setBrainDashboard] = useState<BrainDashboardRecord | null>(null);
@@ -4928,6 +4934,7 @@ function App() {
     if (mode === "billing") return true;
     if (mode === "admin_subscriptions") return canManageAccounts;
     if (mode === "settings") return true;
+    if (mode === "company_live") return true;
     if (!allowedFeatureSet) return true;
     if (mode === "nesting_workspace" && (allowedFeatureSet.has("nesting_studio") || allowedFeatureSet.has("nesting_intelligence"))) return true;
     if (mode === "nesting_studio" && (allowedFeatureSet.has("nesting_workspace") || allowedFeatureSet.has("nesting_intelligence"))) return true;
@@ -4949,6 +4956,8 @@ function App() {
     { id: "ai_assistant", label: "Queue" },
     { id: "nesting_workspace", label: "Nest" },
     { id: "company_live", label: "Live" },
+    { id: "qr", label: "QR" },
+    { id: "files", label: "Files" },
     { id: "admin_subscriptions", label: "Subs" }
   ];
   const visibleSidebarItems = sidebarItems.filter((item) => canOpenViewMode(item.id));
@@ -6851,6 +6860,11 @@ function App() {
     user?.email,
     user?.name
   ]);
+
+  useEffect(() => {
+    if (offlineBootMode || viewMode !== "files" || !workspaceId) return;
+    void refreshStorage();
+  }, [offlineBootMode, viewMode, workspaceId]);
 
   useEffect(() => {
     if (offlineBootMode || !workspaceId || !user) return;
@@ -9458,13 +9472,21 @@ function App() {
 
   async function refreshStorage() {
     if (!workspaceId) return;
+    setStorageRefreshing(true);
+    setStorageError(null);
     try {
       const res = await apiFetch(`/api/workspaces/${workspaceId}/storage/overview`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setStorageError(data?.error ?? "Failed to refresh folders.");
+        return;
+      }
       const data = (await res.json()) as StorageOverview;
       setStorageOverview(data);
-    } catch {
-      // ignore
+    } catch (error) {
+      setStorageError(error instanceof Error ? error.message : "Failed to refresh folders.");
+    } finally {
+      setStorageRefreshing(false);
     }
   }
 
@@ -10169,18 +10191,36 @@ function App() {
     await refreshCustomerSummary();
   }
 
-  async function runQuantityCheck(jobId: string, expected?: number) {
+  async function runQuantityCheck(jobId: string, expected?: number, quantityOverride?: number) {
     if (!workspaceId) return;
-    const quantity = window.prompt("Quantity checked?", expected?.toString() ?? "");
+    const quantity =
+      typeof quantityOverride === "number"
+        ? String(quantityOverride)
+        : window.prompt("Quantity checked?", expected?.toString() ?? "");
     if (!quantity) return;
     const parsed = Number(quantity);
-    if (!Number.isFinite(parsed)) return;
-    await apiFetch(`/api/workspaces/${workspaceId}/jobs/${jobId}/quantity-check`, {
-      method: "POST",
-      body: JSON.stringify({ quantity: parsed, roomId })
-    });
-    await refreshJobs();
-    await refreshCustomerSummary();
+    if (!Number.isFinite(parsed)) {
+      setQrStatusMessage("Enter a valid quantity.");
+      return;
+    }
+    try {
+      const res = await apiFetch(`/api/workspaces/${workspaceId}/jobs/${jobId}/quantity-check`, {
+        method: "POST",
+        body: JSON.stringify({ quantity: parsed, roomId })
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        setQrStatusMessage(data?.error ?? "Quantity check failed.");
+        return;
+      }
+      setQrQcJobId(null);
+      setQrQcQuantity("");
+      setQrStatusMessage(`Checked quantity ${parsed} saved.`);
+      await refreshJobs();
+      await refreshCustomerSummary();
+    } catch (error) {
+      setQrStatusMessage(error instanceof Error ? error.message : "Quantity check failed.");
+    }
   }
 
   async function fetchJobCardBlob(
@@ -15960,9 +16000,13 @@ function App() {
               ? "Company Live Dashboard"
               : viewMode === "files"
               ? "File Organizer"
+              : viewMode === "qr"
+              ? "QR Station"
               : viewMode === "settings"
               ? "Settings"
-              : "QR Station"}
+              : viewMode === "chat"
+              ? "Chat"
+              : "Qouter X"}
           </div>
         </div>
 
@@ -16220,6 +16264,141 @@ function App() {
                 </div>
               ) : null}
               {redeemStatus ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{redeemStatus}</div> : null}
+            </div>
+
+            <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }} id="company-cloud-sync">
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 10, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>Company Cloud Sync</div>
+                  <div style={{ fontSize: 12, opacity: 0.72, marginTop: 4 }}>
+                    Report devices and activity to the company live dashboard. Enable this to power the Live screen.
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#d1d5db", whiteSpace: "nowrap" }}>
+                  <input
+                    type="checkbox"
+                    checked={cloudSyncSettings.enabled}
+                    onChange={(e) => setCloudSyncSettings((current) => ({ ...current, enabled: e.target.checked }))}
+                  />
+                  Enable reporting
+                </label>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div style={{ gridColumn: "span 2" }}>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Company ID</div>
+                  <input
+                    value={cloudSyncSettings.companyId}
+                    onChange={(e) => setCloudSyncSettings((current) => ({ ...current, companyId: e.target.value.trim() }))}
+                    placeholder={billingCompany?.id ?? billing.companyId ?? "Company ID"}
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white", boxSizing: "border-box" }}
+                  />
+                  {(billingCompany?.id || billing.companyId) && !cloudSyncSettings.companyId ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCloudSyncSettings((current) => ({
+                          ...current,
+                          companyId: (billingCompany?.id ?? billing.companyId ?? "").trim()
+                        }))
+                      }
+                      style={{
+                        marginTop: 8,
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: "1px solid rgba(96,165,250,0.45)",
+                        background: "rgba(37,99,235,0.18)",
+                        color: "#bfdbfe",
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 700
+                      }}
+                    >
+                      Use linked company ID
+                    </button>
+                  ) : null}
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Device name</div>
+                  <input
+                    value={cloudSyncSettings.deviceName}
+                    onChange={(e) => setCloudSyncSettings((current) => ({ ...current, deviceName: e.target.value }))}
+                    placeholder="This computer"
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white", boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 4 }}>Role</div>
+                  <select
+                    value={cloudSyncSettings.role}
+                    onChange={(e) =>
+                      setCloudSyncSettings((current) => ({
+                        ...current,
+                        role: e.target.value as CloudSyncSettingsRecord["role"]
+                      }))
+                    }
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #333", background: "#111", color: "white" }}
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="operator">Operator</option>
+                    <option value="sales">Sales</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void saveCloudSyncSettings();
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #166534",
+                    background: "#15803d",
+                    color: "white",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
+                  Save Cloud Sync
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void syncCloudNow();
+                  }}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #2563eb",
+                    background: "#1d4ed8",
+                    color: "white",
+                    cursor: "pointer",
+                    fontWeight: 700
+                  }}
+                >
+                  Sync Now
+                </button>
+              </div>
+              {cloudSyncStatus ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    border: cloudSyncStatus.toLowerCase().includes("fail")
+                      ? "1px solid rgba(248,113,113,0.45)"
+                      : "1px solid rgba(34,197,94,0.35)",
+                    background: cloudSyncStatus.toLowerCase().includes("fail")
+                      ? "rgba(127,29,29,0.28)"
+                      : "rgba(20,83,45,0.24)"
+                  }}
+                >
+                  {cloudSyncStatus}
+                </div>
+              ) : null}
             </div>
 
             {isAppOwner ? (
@@ -20319,25 +20498,48 @@ function App() {
                 </div>
               </div>
               <div style={{ background: "#232428", borderRadius: 12, padding: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 700 }}>Recent Activity Feed</div>
-                  <button
-                    onClick={() => {
-                      void syncCloudNow();
-                    }}
-                    style={{
-                      padding: "8px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #166534",
-                      background: "#15803d",
-                      color: "white",
-                      cursor: "pointer",
-                      fontSize: 12
-                    }}
-                  >
-                    Sync Now
-                  </button>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode("settings")}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #444",
+                        background: "#374151",
+                        color: "white",
+                        cursor: "pointer",
+                        fontSize: 12
+                      }}
+                    >
+                      Cloud Settings
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void syncCloudNow();
+                      }}
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #166534",
+                        background: "#15803d",
+                        color: "white",
+                        cursor: "pointer",
+                        fontSize: 12
+                      }}
+                    >
+                      Sync Now
+                    </button>
+                  </div>
                 </div>
+                {!cloudSyncSettings.enabled || !cloudSyncSettings.companyId.trim() ? (
+                  <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(217,164,65,0.35)", background: "rgba(217,164,65,0.08)", color: "#f6d58a" }}>
+                    Cloud reporting is off. Open Cloud Settings to enable Live updates.
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {(cloudDashboard?.recentEvents ?? cloudEvents).slice(0, 30).map((event) => (
                     <div key={event.id} style={{ background: "#1b1c1f", borderRadius: 8, padding: 10 }}>
@@ -25073,10 +25275,36 @@ function App() {
                 <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid rgba(140,170,210,0.18)", background: "linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) 120px", alignItems: "center", gap: 12 }}>
                     <div style={{ display: "flex", justifyContent: "center" }}>
-                      <div style={{ width: "100%", maxWidth: 420, display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 16, background: "rgba(12, 23, 37, 0.62)", border: "1px solid rgba(132, 166, 215, 0.14)", color: "rgba(232,240,252,0.92)" }}>
-                        <span style={{ fontSize: 18, opacity: 0.82 }}>⌕</span>
-                        <span style={{ fontSize: 15, opacity: 0.86 }}>Search</span>
-                      </div>
+                      <label
+                        style={{
+                          width: "100%",
+                          maxWidth: 420,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 16px",
+                          borderRadius: 16,
+                          background: "rgba(12, 23, 37, 0.62)",
+                          border: "1px solid rgba(132, 166, 215, 0.14)",
+                          color: "rgba(232,240,252,0.92)"
+                        }}
+                      >
+                        <span style={{ fontSize: 18, opacity: 0.82 }} aria-hidden="true">⌕</span>
+                        <input
+                          value={inboxSearch}
+                          onChange={(e) => setInboxSearch(e.target.value)}
+                          placeholder="Search inbox…"
+                          aria-label="Search inbox"
+                          style={{
+                            flex: 1,
+                            border: "none",
+                            outline: "none",
+                            background: "transparent",
+                            color: "rgba(232,240,252,0.92)",
+                            fontSize: 15
+                          }}
+                        />
+                      </label>
                     </div>
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, color: "rgba(230,236,245,0.8)", fontSize: 18 }}>
                       <span>⟲</span>
@@ -26661,107 +26889,496 @@ function App() {
             </div>
           </div>
         ) : viewMode === "qr" ? (
-          <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
-            <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>QR Quantity Check</div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Scan or enter a job ID, then confirm quantity to complete.
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              {jobs.map((job) => (
-                <div key={job.id} style={{ background: "#1b1c1f", borderRadius: 12, padding: 12 }}>
-                  <div style={{ fontWeight: 700 }}>{job.jobNumber}</div>
-                  <div style={{ fontSize: 12, opacity: 0.8 }}>{job.title}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>{job.customerName ?? "No customer"}</div>
-                  <div style={{ margin: "12px 0" }}>
-                    <QRCodeCanvas
-                      value={`${APP_URL}/scan?token=${job.qrToken}`}
-                      size={120}
-                      bgColor="#ffffff"
-                      fgColor="#111827"
-                    />
+          (() => {
+            const query = qrStationSearch.trim().toLowerCase();
+            const filteredJobs = query
+              ? jobs.filter((job) =>
+                  `${job.jobNumber} ${job.title} ${job.customerName ?? ""} ${job.status}`.toLowerCase().includes(query)
+                )
+              : jobs;
+            const qcJob = qrQcJobId ? jobs.find((job) => job.id === qrQcJobId) ?? null : null;
+            const statusTone = (status: JobRecord["status"]): "neutral" | "success" | "warning" | "info" =>
+              status === "done" ? "success" : status === "in_progress" ? "info" : status === "incomplete" ? "warning" : "neutral";
+            return (
+              <div
+                role="region"
+                aria-label="QR Station"
+                style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, background: UI.colors.appBg, position: "relative", overflow: "hidden" }}
+              >
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    pointerEvents: "none",
+                    background:
+                      "radial-gradient(ellipse 55% 40% at 8% 0%, rgba(99,102,241,0.12) 0%, transparent 65%), radial-gradient(ellipse 40% 30% at 92% 100%, rgba(62,200,120,0.06) 0%, transparent 65%)"
+                  }}
+                />
+                <div
+                  style={{
+                    position: "relative",
+                    zIndex: 2,
+                    flexShrink: 0,
+                    borderBottom: `1px solid ${UI.colors.border}`,
+                    background: "rgba(17,17,21,0.92)",
+                    backdropFilter: "blur(16px)",
+                    padding: "14px 24px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    flexWrap: "wrap"
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: "0.04em" }}>QR STATION</div>
+                    <div style={{ fontSize: 11, color: UI.colors.muted, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 2 }}>
+                      Print · Copy link · Quantity check
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, opacity: 0.6 }}>QR Token: {job.qrToken}</div>
-                  <button
-                    onClick={() => runQuantityCheck(job.id, job.quantityExpected)}
+                  <div style={{ flex: 1 }} />
+                  <StatusBadge tone="info">{filteredJobs.length} job{filteredJobs.length === 1 ? "" : "s"}</StatusBadge>
+                  <input
+                    value={qrStationSearch}
+                    onChange={(e) => setQrStationSearch(e.target.value)}
+                    placeholder="Search jobs…"
+                    aria-label="Search QR jobs"
                     style={{
-                      marginTop: 8,
-                      padding: "6px 10px",
-                      borderRadius: 6,
-                      border: "1px solid #444",
-                      background: "#5865f2",
-                      color: "white",
-                      cursor: "pointer",
+                      minWidth: 220,
+                      padding: "9px 12px",
+                      borderRadius: 10,
+                      border: `1px solid ${UI.colors.border}`,
+                      background: "rgba(255,255,255,0.04)",
+                      color: UI.colors.text,
+                      outline: "none"
+                    }}
+                  />
+                </div>
+
+                {qrStatusMessage ? (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      position: "relative",
+                      zIndex: 2,
+                      margin: "12px 24px 0",
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      border: qrStatusMessage.toLowerCase().includes("fail") || qrStatusMessage.toLowerCase().includes("valid")
+                        ? "1px solid rgba(248,113,113,0.4)"
+                        : "1px solid rgba(62,200,120,0.35)",
+                      background: qrStatusMessage.toLowerCase().includes("fail") || qrStatusMessage.toLowerCase().includes("valid")
+                        ? "rgba(127,29,29,0.25)"
+                        : "rgba(20,83,45,0.22)",
                       fontSize: 12
                     }}
                   >
-                    Check Quantity
-                  </button>
+                    {qrStatusMessage}
+                  </div>
+                ) : null}
+
+                <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, overflow: "auto", padding: "20px 24px 28px" }}>
+                  {filteredJobs.length === 0 ? (
+                    <div className="qx-empty-state" style={{ padding: 40 }}>
+                      <div style={{ fontWeight: 800, marginBottom: 8 }}>{jobs.length === 0 ? "No jobs yet" : "No matching jobs"}</div>
+                      <div style={{ fontSize: 13, color: UI.colors.muted, lineHeight: 1.6 }}>
+                        {jobs.length === 0
+                          ? "Create a job card first. Each job gets a QR code you can print or share for quantity checks."
+                          : "Try a different search for job number, title, customer, or status."}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+                      {filteredJobs.map((job) => {
+                        const scanUrl = `${APP_URL}/scan?token=${job.qrToken}`;
+                        return (
+                          <article
+                            key={job.id}
+                            style={{
+                              background: "rgba(255,255,255,0.03)",
+                              border: `1px solid ${UI.colors.border}`,
+                              borderRadius: 16,
+                              padding: 16,
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 10
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                              <div>
+                                <div style={{ fontWeight: 800 }}>{job.jobNumber}</div>
+                                <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 2 }}>{job.title}</div>
+                              </div>
+                              <StatusBadge tone={statusTone(job.status)}>{job.status.replace(/_/g, " ")}</StatusBadge>
+                            </div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted }}>{job.customerName ?? "No customer"}</div>
+                            <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                              Qty {job.quantityChecked ?? 0}/{job.quantityExpected ?? "—"}
+                            </div>
+                            <div
+                              style={{
+                                alignSelf: "center",
+                                padding: 10,
+                                background: "white",
+                                borderRadius: 12,
+                                boxShadow: "0 8px 24px rgba(0,0,0,0.25)"
+                              }}
+                            >
+                              <QRCodeCanvas value={scanUrl} size={140} bgColor="#ffffff" fgColor="#111827" aria-label={`QR for job ${job.jobNumber}`} />
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <button
+                                type="button"
+                                aria-label={`Copy scan link for ${job.jobNumber}`}
+                                onClick={() => {
+                                  void navigator.clipboard?.writeText(scanUrl).then(
+                                    () => setQrStatusMessage(`Copied scan link for ${job.jobNumber}.`),
+                                    () => setQrStatusMessage("Could not copy link.")
+                                  );
+                                }}
+                                style={{
+                                  padding: "8px 10px",
+                                  borderRadius: 10,
+                                  border: `1px solid ${UI.colors.border}`,
+                                  background: "rgba(255,255,255,0.04)",
+                                  color: UI.colors.text,
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 700
+                                }}
+                              >
+                                Copy Link
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setQrQcJobId(job.id);
+                                  setQrQcQuantity(String(job.quantityExpected ?? job.quantityChecked ?? ""));
+                                  setQrStatusMessage(null);
+                                }}
+                                style={{
+                                  padding: "8px 10px",
+                                  borderRadius: 10,
+                                  border: "1px solid rgba(99,102,241,0.45)",
+                                  background: "rgba(99,102,241,0.18)",
+                                  color: "#c7d2fe",
+                                  cursor: "pointer",
+                                  fontSize: 12,
+                                  fontWeight: 700
+                                }}
+                              >
+                                Check Qty
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
-          </div>
-        ) : viewMode === "files" ? (
-          <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
-            <div style={{ background: "#232428", borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>File Organizer</div>
-              <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Root: {storageOverview?.jobnestRoot ?? "Detecting OneDrive..."}
+
+                {qcJob ? (
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={`Quantity check for ${qcJob.jobNumber}`}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      zIndex: 20,
+                      background: "rgba(0,0,0,0.55)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: 24
+                    }}
+                    onClick={() => setQrQcJobId(null)}
+                  >
+                    <div
+                      style={{
+                        width: "100%",
+                        maxWidth: 420,
+                        background: "#12141a",
+                        border: `1px solid ${UI.colors.border}`,
+                        borderRadius: 16,
+                        padding: 20,
+                        boxShadow: UI.shadow.card
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>Quantity check</div>
+                      <div style={{ fontSize: 13, color: UI.colors.muted, marginBottom: 14 }}>
+                        {qcJob.jobNumber} · {qcJob.title}
+                        {typeof qcJob.quantityExpected === "number" ? ` · expected ${qcJob.quantityExpected}` : ""}
+                      </div>
+                      <label style={{ display: "block", fontSize: 11, color: UI.colors.muted, marginBottom: 6 }}>Checked quantity</label>
+                      <input
+                        autoFocus
+                        value={qrQcQuantity}
+                        onChange={(e) => setQrQcQuantity(e.target.value)}
+                        inputMode="numeric"
+                        style={{
+                          width: "100%",
+                          padding: "10px 12px",
+                          borderRadius: 10,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: "rgba(255,255,255,0.04)",
+                          color: UI.colors.text,
+                          marginBottom: 14,
+                          boxSizing: "border-box"
+                        }}
+                      />
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          onClick={() => setQrQcJobId(null)}
+                          style={{
+                            padding: "9px 14px",
+                            borderRadius: 10,
+                            border: `1px solid ${UI.colors.border}`,
+                            background: "transparent",
+                            color: UI.colors.muted,
+                            cursor: "pointer",
+                            fontWeight: 700
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const parsed = Number(qrQcQuantity);
+                            void runQuantityCheck(qcJob.id, qcJob.quantityExpected, parsed);
+                          }}
+                          style={{
+                            padding: "9px 14px",
+                            borderRadius: 10,
+                            border: "1px solid rgba(62,200,120,0.45)",
+                            background: "rgba(62,200,120,0.18)",
+                            color: "#86efac",
+                            cursor: "pointer",
+                            fontWeight: 700
+                          }}
+                        >
+                          Save check
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              <button
-                onClick={refreshStorage}
+            );
+          })()
+        ) : viewMode === "files" ? (
+          (() => {
+            const customers = storageOverview?.customers ?? [];
+            const activeJobs = storageOverview?.jobsActive ?? [];
+            const completedJobs = storageOverview?.jobsCompleted ?? [];
+            const openFolder = async (path: string) => {
+              if (!window.desktopShell?.openPath) {
+                setStorageError("Open folder is only available in the desktop app.");
+                return;
+              }
+              const result = await window.desktopShell.openPath(path);
+              if (result && !result.ok) {
+                setStorageError(result.error ?? "Failed to open folder.");
+              }
+            };
+            const copyPath = async (path: string) => {
+              try {
+                await navigator.clipboard.writeText(path);
+                setStorageError(null);
+                setQrStatusMessage(`Copied path: ${path}`);
+              } catch {
+                setStorageError("Could not copy folder path.");
+              }
+            };
+            const renderFolderColumn = (
+              title: string,
+              root: string | undefined,
+              entries: Array<{ name: string; path: string }>,
+              emptyLabel: string
+            ) => (
+              <section
+                aria-label={title}
                 style={{
-                  marginTop: 10,
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  border: "1px solid #444",
-                  background: "#232428",
-                  color: "white",
-                  cursor: "pointer",
-                  fontSize: 12
+                  background: "rgba(255,255,255,0.03)",
+                  border: `1px solid ${UI.colors.border}`,
+                  borderRadius: 16,
+                  overflow: "hidden",
+                  minHeight: 280,
+                  display: "flex",
+                  flexDirection: "column"
                 }}
               >
-                Refresh Folders
-              </button>
-            </div>
+                <div style={{ padding: "14px 16px", borderBottom: `1px solid ${UI.colors.border}`, background: "rgba(255,255,255,0.02)" }}>
+                  <div style={{ fontWeight: 800 }}>{title}</div>
+                  <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 4, wordBreak: "break-all" }}>{root ?? "—"}</div>
+                  <div style={{ fontSize: 11, color: UI.colors.muted, marginTop: 4 }}>{entries.length} folder{entries.length === 1 ? "" : "s"}</div>
+                </div>
+                <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8, flex: 1, overflow: "auto" }}>
+                  {entries.map((entry) => (
+                    <div
+                      key={entry.path}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        alignItems: "center",
+                        padding: "10px 12px",
+                        borderRadius: 12,
+                        border: `1px solid ${UI.colors.border}`,
+                        background: "rgba(255,255,255,0.02)"
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.path}>
+                        {entry.name}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          aria-label={`Copy path for ${entry.name}`}
+                          onClick={() => {
+                            void copyPath(entry.path);
+                          }}
+                          style={{
+                            padding: "5px 8px",
+                            borderRadius: 8,
+                            border: `1px solid ${UI.colors.border}`,
+                            background: "transparent",
+                            color: UI.colors.muted,
+                            cursor: "pointer",
+                            fontSize: 11,
+                            fontWeight: 700
+                          }}
+                        >
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Open folder ${entry.name}`}
+                          onClick={() => {
+                            void openFolder(entry.path);
+                          }}
+                          style={{
+                            padding: "5px 8px",
+                            borderRadius: 8,
+                            border: "1px solid rgba(96,165,250,0.35)",
+                            background: "rgba(37,99,235,0.16)",
+                            color: "#bfdbfe",
+                            cursor: "pointer",
+                            fontSize: 11,
+                            fontWeight: 700
+                          }}
+                        >
+                          Open
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {entries.length === 0 ? (
+                    <div className="qx-empty-state" style={{ padding: 24 }}>
+                      <div style={{ fontSize: 12 }}>{storageRefreshing ? "Loading folders…" : emptyLabel}</div>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            );
+            return (
+              <div
+                role="region"
+                aria-label="File Organizer"
+                style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, background: UI.colors.appBg, position: "relative", overflow: "hidden" }}
+              >
+                <div
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    pointerEvents: "none",
+                    background:
+                      "radial-gradient(ellipse 55% 40% at 10% 0%, rgba(56,189,248,0.1) 0%, transparent 65%), radial-gradient(ellipse 35% 28% at 90% 100%, rgba(251,191,36,0.06) 0%, transparent 65%)"
+                  }}
+                />
+                <div
+                  style={{
+                    position: "relative",
+                    zIndex: 2,
+                    flexShrink: 0,
+                    borderBottom: `1px solid ${UI.colors.border}`,
+                    background: "rgba(17,17,21,0.92)",
+                    backdropFilter: "blur(16px)",
+                    padding: "14px 24px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    flexWrap: "wrap"
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: "0.04em" }}>FILE ORGANIZER</div>
+                    <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4, wordBreak: "break-all" }}>
+                      Root: {storageOverview?.jobnestRoot ?? (storageRefreshing ? "Detecting OneDrive…" : "Not detected yet")}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <StatusBadge tone="info">{storageOverview?.jobCount ?? 0} jobs tracked</StatusBadge>
+                    <StatusBadge tone="neutral">{customers.length} customers</StatusBadge>
+                    <StatusBadge tone="success">{activeJobs.length} active</StatusBadge>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void refreshStorage();
+                    }}
+                    disabled={storageRefreshing}
+                    aria-busy={storageRefreshing}
+                    style={{
+                      padding: "9px 14px",
+                      borderRadius: 10,
+                      border: "1px solid rgba(56,189,248,0.4)",
+                      background: storageRefreshing ? "rgba(255,255,255,0.04)" : "rgba(56,189,248,0.14)",
+                      color: storageRefreshing ? UI.colors.muted : "#7dd3fc",
+                      cursor: storageRefreshing ? "default" : "pointer",
+                      fontWeight: 700,
+                      fontSize: 12
+                    }}
+                  >
+                    {storageRefreshing ? "Refreshing…" : "Refresh Folders"}
+                  </button>
+                </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-              <div style={{ background: "#1b1c1f", borderRadius: 12, padding: 12 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Customers</div>
-                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
-                  {storageOverview?.customersRoot ?? "-"}
-                </div>
-                {storageOverview?.customers.map((entry) => (
-                  <div key={entry.path} style={{ fontSize: 12, marginBottom: 4 }}>
-                    {entry.name}
+                {(storageError || qrStatusMessage?.startsWith("Copied path:")) && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      position: "relative",
+                      zIndex: 2,
+                      margin: "12px 24px 0",
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      fontSize: 12,
+                      border: storageError ? "1px solid rgba(248,113,113,0.4)" : "1px solid rgba(62,200,120,0.35)",
+                      background: storageError ? "rgba(127,29,29,0.25)" : "rgba(20,83,45,0.22)",
+                      color: storageError ? "#fecaca" : "#86efac"
+                    }}
+                  >
+                    {storageError ?? qrStatusMessage}
                   </div>
-                ))}
-              </div>
-              <div style={{ background: "#1b1c1f", borderRadius: 12, padding: 12 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Active Jobs</div>
-                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
-                  {storageOverview?.jobsActiveRoot ?? "-"}
-                </div>
-                {storageOverview?.jobsActive.map((entry) => (
-                  <div key={entry.path} style={{ fontSize: 12, marginBottom: 4 }}>
-                    {entry.name}
+                )}
+
+                <div style={{ position: "relative", zIndex: 1, flex: 1, minHeight: 0, overflow: "auto", padding: "20px 24px 28px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+                    {renderFolderColumn("Customers", storageOverview?.customersRoot, customers, "No customer folders yet.")}
+                    {renderFolderColumn("Active Jobs", storageOverview?.jobsActiveRoot, activeJobs, "No active job folders yet.")}
+                    {renderFolderColumn("Completed Jobs", storageOverview?.jobsCompletedRoot, completedJobs, "No completed job folders yet.")}
                   </div>
-                ))}
-              </div>
-              <div style={{ background: "#1b1c1f", borderRadius: 12, padding: 12 }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>Completed Jobs</div>
-                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
-                  {storageOverview?.jobsCompletedRoot ?? "-"}
                 </div>
-                {storageOverview?.jobsCompleted.map((entry) => (
-                  <div key={entry.path} style={{ fontSize: 12, marginBottom: 4 }}>
-                    {entry.name}
-                  </div>
-                ))}
               </div>
-            </div>
-          </div>
+            );
+          })()
         ) : (
           <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
