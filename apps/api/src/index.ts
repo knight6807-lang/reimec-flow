@@ -101,6 +101,7 @@ import { SheetOptimizerService, openSheetOptimizerDatabase } from "./sheet-optim
 import { DxfErrorDetectionService, openDxfErrorDetectionDatabase } from "./dxf-error-detection.js";
 import { NestingIntelligenceService, openNestingIntelligenceDatabase, type NestingPartCandidate } from "./nesting-intelligence.js";
 import { CypNestProgramService, extractDxfGeometry, NestingEngineService, openNestingEngineDatabase, type CypNestProgramInput, type NestPart, type NestResult, type SheetSource } from "./QouterXNestingEngine.js";
+import { resolveNestingWorkerEntry } from "./nesting-worker-entry.js";
 import { NestingWorkspaceService, openNestingWorkspaceDatabase } from "./nesting-workspace.js";
 import { ProductionAssistantService } from "./production-assistant.js";
 import { QouterXBrainOrchestrator, type BrainModuleName, type BrainRunMode } from "./qouterx-brain-orchestrator.js";
@@ -9337,24 +9338,31 @@ app.post("/api/nesting/program/run", authRequired, (req: AuthedRequest, res) => 
 
 function runNestingInWorker(input: { parts: NestPart[]; sheet: SheetSource; customerName: string; nestName: string; maxOptimizationMs: number; angleStepDegrees?: number }) {
   return new Promise<NestResult>((resolve, reject) => {
-    const worker = new Worker(new URL("./nesting-run-worker.js", import.meta.url), { workerData: input });
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+    const entry = resolveNestingWorkerEntry("nesting-run-worker");
+    const worker = new Worker(entry.filename, { workerData: input, ...(entry.options ?? {}) });
     const timeout = setTimeout(() => {
       worker.terminate().catch(() => undefined);
-      reject(new Error("Nesting worker timed out"));
+      settle(() => reject(new Error("Nesting worker timed out")));
     }, Math.max(1_000, input.maxOptimizationMs + 5_000));
     worker.once("message", (message: { result?: NestResult; error?: string }) => {
       clearTimeout(timeout);
-      if (message.error) reject(new Error(message.error));
-      else if (message.result) resolve(message.result);
-      else reject(new Error("Nesting worker returned no result"));
+      if (message.error) settle(() => reject(new Error(message.error)));
+      else if (message.result) settle(() => resolve(message.result as NestResult));
+      else settle(() => reject(new Error("Nesting worker returned no result")));
     });
     worker.once("error", (error) => {
       clearTimeout(timeout);
-      reject(error);
+      settle(() => reject(error));
     });
     worker.once("exit", (code) => {
       clearTimeout(timeout);
-      if (code !== 0) reject(new Error(`Nesting worker exited with code ${code}`));
+      if (code !== 0) settle(() => reject(new Error(`Nesting worker exited with code ${code}`)));
     });
   });
 }

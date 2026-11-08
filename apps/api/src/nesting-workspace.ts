@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { backupDatabaseBeforeMigration, DatabaseSync } from "./db.js";
 import type { BrainCoreService } from "./brain-core.js";
 import { GeometryNormalizer, runAdvancedNesting, type DxfOriginalEntity, type NestPart, type NestWarning, type Point, type SheetSource } from "./nesting-engine.js";
+import { resolveNestingWorkerEntry } from "./nesting-worker-entry.js";
 import { addOffcut, listOffcuts, type OffcutRecord } from "./stock-material.js";
 
 export type NestingWorkspaceStatus = "draft" | "nested" | "exported" | "completed";
@@ -849,14 +850,22 @@ export class NestingWorkspaceService {
   async autoNestInWorker(workspaceId: number) {
     const workspace = this.requireWorkspace(workspaceId);
     const parts = this.listParts(workspaceId);
-    const fastPlacements = this.safeBottomLeftPack(workspace, parts);
-    return this.finishAutoNest(workspaceId, workspace, fastPlacements, { workspacePacker: true, workerThread: false });
+    return this.autoNestInOptimizationWorker(workspaceId, workspace, parts);
   }
 
   private async autoNestInOptimizationWorker(workspaceId: number, workspace: NestingWorkspaceRecord, parts: NestingWorkspacePartRecord[]) {
+    const maxOptimizationMs = 10_000;
     try {
       const placements = await new Promise<Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>>((resolve, reject) => {
-        const worker = new Worker(new URL("./nesting-workspace-worker.js", import.meta.url), {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          fn();
+        };
+        const entry = resolveNestingWorkerEntry("nesting-workspace-worker");
+        const worker = new Worker(entry.filename, {
+          ...(entry.options ?? {}),
           workerData: {
             workspace: {
               border: workspace.border,
@@ -881,16 +890,20 @@ export class NestingWorkspaceService {
         });
         const timer = setTimeout(() => {
           worker.terminate().catch(() => undefined);
-          reject(new Error("nesting worker timed out"));
-        }, 3_000);
+          settle(() => reject(new Error("nesting worker timed out")));
+        }, maxOptimizationMs + 5_000);
         worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; error?: string }) => {
           clearTimeout(timer);
-          if (message.error) reject(new Error(message.error));
-          else resolve(message.placements ?? []);
+          if (message.error) settle(() => reject(new Error(message.error)));
+          else settle(() => resolve(message.placements ?? []));
         });
         worker.once("error", (error) => {
           clearTimeout(timer);
-          reject(error);
+          settle(() => reject(error));
+        });
+        worker.once("exit", (code) => {
+          clearTimeout(timer);
+          if (code !== 0) settle(() => reject(new Error(`nesting worker exited with code ${code}`)));
         });
       });
       const safePlacements = this.ensureNonOverlappingPlacements(workspace, parts, placements);
