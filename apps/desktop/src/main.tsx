@@ -4904,10 +4904,12 @@ function App() {
   const [nestingWorkspaceLeadInType, setNestingWorkspaceLeadInType] = useState<"line" | "arc">("line");
   const [nestingWorkspaceLeadInLength, setNestingWorkspaceLeadInLength] = useState("3");
   const [nestingWorkspaceSelectedPlacementId, setNestingWorkspaceSelectedPlacementId] = useState<number | null>(null);
+  const [nestingWorkspaceSelectedSheet, setNestingWorkspaceSelectedSheet] = useState(0);
   const [nestingWorkspaceManualMode, setNestingWorkspaceManualMode] = useState(false);
   const [nestingWorkspaceShowGrid, setNestingWorkspaceShowGrid] = useState(true);
   const [nestingWorkspaceShowCollision, setNestingWorkspaceShowCollision] = useState(true);
   const [nestingWorkspaceShowBorder, setNestingWorkspaceShowBorder] = useState(true);
+  const [nestingWorkspaceShowSpacing, setNestingWorkspaceShowSpacing] = useState(true);
   const [nestingWorkspaceShowBoundingBoxes, setNestingWorkspaceShowBoundingBoxes] = useState(false);
   const [nestingWorkspaceZoom, setNestingWorkspaceZoom] = useState(1);
   const [productionAssistantMessages, setProductionAssistantMessages] = useState<
@@ -8873,6 +8875,7 @@ function App() {
       }
       await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
       await refreshBrainCenter();
+      setNestingWorkspaceSelectedSheet(0);
       const refreshed = await (async () => {
         const latest = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}`);
         return (await latest.json().catch(() => null)) as { workspace?: NestingWorkspaceRecord } | null;
@@ -8881,13 +8884,14 @@ function App() {
       const warnings = workspace?.warnings ?? data?.warnings ?? [];
       const critical = warnings.filter((warning) => warning.severity === "critical");
       const placed = workspace?.placements?.length ?? 0;
+      const sheets = new Set((workspace?.placements ?? []).map((placement) => placement.sheetIndex)).size || 1;
       const requested = (workspace?.parts ?? []).reduce((sum, part) => sum + Math.max(1, Math.round(part.quantity || 1)), 0);
       if (critical.length || placed < requested) {
         setNestingWorkspaceError(critical.map((warning) => warning.message).join(" · ") || `Nest incomplete: placed ${placed} of ${requested} parts.`);
-        setNestingWorkspaceStatus(`Incomplete nest · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}% · waste ${(workspace?.wastePercent ?? 0).toFixed(1)}%`);
+        setNestingWorkspaceStatus(`Incomplete nest · ${sheets} sheet${sheets === 1 ? "" : "s"} · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}%`);
       } else {
         setNestingWorkspaceError(null);
-        setNestingWorkspaceStatus(`Nest complete · ${placed} parts · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}% · waste ${(workspace?.wastePercent ?? 0).toFixed(1)}%`);
+        setNestingWorkspaceStatus(`Nest complete · ${placed} parts on ${sheets} sheet${sheets === 1 ? "" : "s"} · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}% · waste ${(workspace?.wastePercent ?? 0).toFixed(1)}%`);
       }
     } catch (error) {
       setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to auto nest.");
@@ -18561,6 +18565,7 @@ function App() {
                       ["Grid", nestingWorkspaceShowGrid, setNestingWorkspaceShowGrid],
                       ["Collision overlay", nestingWorkspaceShowCollision, setNestingWorkspaceShowCollision],
                       ["Sheet border", nestingWorkspaceShowBorder, setNestingWorkspaceShowBorder],
+                      ["Spacing gap", nestingWorkspaceShowSpacing, setNestingWorkspaceShowSpacing],
                       ["Show bounding boxes", nestingWorkspaceShowBoundingBoxes, setNestingWorkspaceShowBoundingBoxes]
                     ].map(([label, checked, setter]) => (
                       <label key={String(label)} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
@@ -18590,120 +18595,159 @@ function App() {
                   </div>
                   {nestingWorkspaceActive ? (
                     <div style={{ overflow: "auto", border: "1px solid transparent", borderRadius: 8, background: "#07111f", padding: 14, minHeight: 460, maxHeight: "calc(100vh - 310px)" }}>
-                      {nestingWorkspaceActive.placements.some((placement) => {
-                        const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
-                        return !nestingWorkspaceGeometryPaths(part, placement).hasTrueGeometry;
-                      }) ? (
-                        <div style={{ color: "#fbbf24", fontSize: 12, marginBottom: 10 }}>
-                          DXF preview geometry missing — bounding box fallback
-                        </div>
-                      ) : null}
-                      <svg
-                        viewBox={`0 0 ${nestingWorkspaceActive.sheetWidth} ${nestingWorkspaceActive.sheetHeight}`}
-                        style={{ width: `${100 * nestingWorkspaceZoom}%`, minWidth: 520, aspectRatio: `${nestingWorkspaceActive.sheetWidth} / ${nestingWorkspaceActive.sheetHeight}`, display: "block" }}
-                      >
-                        <defs>
-                          <pattern id="nest-grid" width="100" height="100" patternUnits="userSpaceOnUse">
-                            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(148,163,184,0.22)" strokeWidth="1" />
-                          </pattern>
-                        </defs>
-                        <rect x="0" y="0" width={nestingWorkspaceActive.sheetWidth} height={nestingWorkspaceActive.sheetHeight} fill={nestingWorkspaceShowGrid ? "url(#nest-grid)" : "#08111f"} stroke={nestingWorkspaceActive.sourceType === "offcut" ? "#fbbf24" : "#94a3b8"} strokeWidth="3" />
-                        {nestingWorkspaceShowBorder ? (
-                          <rect
-                            x={nestingWorkspaceActive.border}
-                            y={nestingWorkspaceActive.border}
-                            width={Math.max(0, nestingWorkspaceActive.sheetWidth - nestingWorkspaceActive.border * 2)}
-                            height={Math.max(0, nestingWorkspaceActive.sheetHeight - nestingWorkspaceActive.border * 2)}
-                            fill="none"
-                            stroke="rgba(110,231,183,0.55)"
-                            strokeDasharray="10 8"
-                            strokeWidth="2"
-                          />
-                        ) : null}
-                        {nestingWorkspaceActive.placements.map((placement) => {
-                          const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
-                          const rotated = placement.rotation === 90 || placement.rotation === 270;
-                          const width = rotated ? part?.height ?? 10 : part?.width ?? 10;
-                          const height = rotated ? part?.width ?? 10 : part?.height ?? 10;
-                          const selected = nestingWorkspaceSelectedPlacementId === placement.id;
-                          const warning = placement.hasCollision || placement.isOutsideSheet;
-                          const geometry = nestingWorkspaceGeometryPaths(part, placement);
-                          return (
-                            <g key={placement.id} onClick={() => setNestingWorkspaceSelectedPlacementId(placement.id)} style={{ cursor: "pointer" }}>
-                              {geometry.outerPath ? (
-                                <path
-                                  d={[geometry.outerPath, ...geometry.holePaths].join(" ")}
-                                  fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
-                                  stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
-                                  strokeWidth={selected ? 4 : 2}
-                                  fillRule="evenodd"
-                                />
-                              ) : (
+                      {(() => {
+                        const sheetIndexes = Array.from(new Set(nestingWorkspaceActive.placements.map((placement) => placement.sheetIndex))).sort((a, b) => a - b);
+                        const activeSheet = sheetIndexes.includes(nestingWorkspaceSelectedSheet) ? nestingWorkspaceSelectedSheet : (sheetIndexes[0] ?? 0);
+                        const sheetPlacements = nestingWorkspaceActive.placements.filter((placement) => placement.sheetIndex === activeSheet);
+                        const spacingGap = Math.max(0, Number(nestingWorkspaceActive.spacing) + Number(nestingWorkspaceActive.kerf));
+                        return (
+                          <>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                {(sheetIndexes.length ? sheetIndexes : [0]).map((sheetIndex) => (
+                                  <Button
+                                    key={`sheet-${sheetIndex}`}
+                                    onClick={() => setNestingWorkspaceSelectedSheet(sheetIndex)}
+                                    variant={sheetIndex === activeSheet ? "primary" : "secondary"}
+                                    style={{ minHeight: 30, padding: "6px 10px" }}
+                                  >
+                                    Sheet {sheetIndex + 1}
+                                  </Button>
+                                ))}
+                              </div>
+                              <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                                {sheetPlacements.length} part{sheetPlacements.length === 1 ? "" : "s"} · gap {spacingGap.toFixed(1)} mm
+                              </div>
+                            </div>
+                            {nestingWorkspaceActive.placements.some((placement) => {
+                              const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
+                              return !nestingWorkspaceGeometryPaths(part, placement).hasTrueGeometry;
+                            }) ? (
+                              <div style={{ color: "#fbbf24", fontSize: 12, marginBottom: 10 }}>
+                                DXF preview geometry missing — bounding box fallback
+                              </div>
+                            ) : null}
+                            <svg
+                              viewBox={`0 0 ${nestingWorkspaceActive.sheetWidth} ${nestingWorkspaceActive.sheetHeight}`}
+                              style={{ width: `${100 * nestingWorkspaceZoom}%`, minWidth: 520, aspectRatio: `${nestingWorkspaceActive.sheetWidth} / ${nestingWorkspaceActive.sheetHeight}`, display: "block" }}
+                            >
+                              <defs>
+                                <pattern id="nest-grid" width="100" height="100" patternUnits="userSpaceOnUse">
+                                  <path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(148,163,184,0.22)" strokeWidth="1" />
+                                </pattern>
+                              </defs>
+                              <rect x="0" y="0" width={nestingWorkspaceActive.sheetWidth} height={nestingWorkspaceActive.sheetHeight} fill={nestingWorkspaceShowGrid ? "url(#nest-grid)" : "#08111f"} stroke={nestingWorkspaceActive.sourceType === "offcut" ? "#fbbf24" : "#94a3b8"} strokeWidth="3" />
+                              {nestingWorkspaceShowBorder ? (
                                 <rect
-                                  x={placement.x}
-                                  y={placement.y}
-                                  width={width}
-                                  height={height}
-                                  fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
-                                  stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
-                                  strokeWidth={selected ? 4 : 2}
-                                />
-                              )}
-                              {geometry.segmentLines.map((segment, index) => (
-                                <line
-                                  key={`${placement.id}-segment-${index}`}
-                                  x1={segment.start.x}
-                                  y1={segment.start.y}
-                                  x2={segment.end.x}
-                                  y2={segment.end.y}
-                                  stroke={segment.kind === "arc" || segment.kind === "circle" ? "#fbbf24" : "#a7f3d0"}
-                                  strokeWidth={selected ? 2.5 : 1.5}
+                                  x={nestingWorkspaceActive.border}
+                                  y={nestingWorkspaceActive.border}
+                                  width={Math.max(0, nestingWorkspaceActive.sheetWidth - nestingWorkspaceActive.border * 2)}
+                                  height={Math.max(0, nestingWorkspaceActive.sheetHeight - nestingWorkspaceActive.border * 2)}
                                   fill="none"
-                                />
-                              ))}
-                              {geometry.circleShapes.map((circle, index) => (
-                                <circle
-                                  key={`${placement.id}-circle-${index}`}
-                                  cx={circle.center.x}
-                                  cy={circle.center.y}
-                                  r={circle.r}
-                                  fill="none"
-                                  stroke="#fbbf24"
-                                  strokeWidth={selected ? 2.5 : 1.5}
-                                />
-                              ))}
-                              {geometry.arcPaths.map((path, index) => (
-                                <path
-                                  key={`${placement.id}-arc-${index}`}
-                                  d={path}
-                                  fill="none"
-                                  stroke="#fbbf24"
-                                  strokeWidth={selected ? 2.5 : 1.5}
-                                />
-                              ))}
-                              {nestingWorkspaceShowBoundingBoxes || !geometry.hasTrueGeometry ? (
-                                <rect
-                                  x={placement.x}
-                                  y={placement.y}
-                                  width={width}
-                                  height={height}
-                                  fill="none"
-                                  stroke={!geometry.hasTrueGeometry ? "#fbbf24" : "rgba(148,163,184,0.72)"}
-                                  strokeDasharray="8 6"
+                                  stroke="rgba(110,231,183,0.55)"
+                                  strokeDasharray="10 8"
                                   strokeWidth="2"
                                 />
                               ) : null}
-                              {!geometry.hasTrueGeometry ? <title>No DXF geometry loaded — showing bounding box fallback</title> : null}
-                              {selected ? (
-                                <>
-                                  <text x={placement.x + 8} y={placement.y + 18} fill="#e5e7eb" fontSize="12">{part?.fileName ?? `Part ${placement.partId}`}</text>
-                                  <text x={placement.x + 8} y={placement.y + 34} fill="#94a3b8" fontSize="10">Rot {placement.rotation}°</text>
-                                </>
-                              ) : null}
-                            </g>
-                          );
-                        })}
-                      </svg>
+                              {sheetPlacements.map((placement) => {
+                                const part = nestingWorkspaceActive.parts.find((entry) => entry.id === placement.partId);
+                                const rotated = placement.rotation === 90 || placement.rotation === 270;
+                                const width = rotated ? part?.height ?? 10 : part?.width ?? 10;
+                                const height = rotated ? part?.width ?? 10 : part?.height ?? 10;
+                                const selected = nestingWorkspaceSelectedPlacementId === placement.id;
+                                const warning = placement.hasCollision || placement.isOutsideSheet;
+                                const geometry = nestingWorkspaceGeometryPaths(part, placement);
+                                return (
+                                  <g key={placement.id} onClick={() => setNestingWorkspaceSelectedPlacementId(placement.id)} style={{ cursor: "pointer" }}>
+                                    {nestingWorkspaceShowSpacing && spacingGap > 0 ? (
+                                      <rect
+                                        x={placement.x - spacingGap / 2}
+                                        y={placement.y - spacingGap / 2}
+                                        width={width + spacingGap}
+                                        height={height + spacingGap}
+                                        fill="rgba(56,189,248,0.05)"
+                                        stroke="rgba(56,189,248,0.35)"
+                                        strokeDasharray="4 6"
+                                        strokeWidth="1"
+                                      />
+                                    ) : null}
+                                    {geometry.outerPath ? (
+                                      <path
+                                        d={[geometry.outerPath, ...geometry.holePaths].join(" ")}
+                                        fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
+                                        stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
+                                        strokeWidth={selected ? 4 : 2}
+                                        fillRule="evenodd"
+                                      />
+                                    ) : (
+                                      <rect
+                                        x={placement.x}
+                                        y={placement.y}
+                                        width={width}
+                                        height={height}
+                                        fill={warning && nestingWorkspaceShowCollision ? "rgba(248,113,113,0.28)" : selected ? "rgba(56,189,248,0.28)" : "rgba(110,231,183,0.18)"}
+                                        stroke={warning && nestingWorkspaceShowCollision ? "#f87171" : selected ? "#38bdf8" : "#6ee7b7"}
+                                        strokeWidth={selected ? 4 : 2}
+                                      />
+                                    )}
+                                    {geometry.segmentLines.map((segment, index) => (
+                                      <line
+                                        key={`${placement.id}-segment-${index}`}
+                                        x1={segment.start.x}
+                                        y1={segment.start.y}
+                                        x2={segment.end.x}
+                                        y2={segment.end.y}
+                                        stroke={segment.kind === "arc" || segment.kind === "circle" ? "#fbbf24" : "#a7f3d0"}
+                                        strokeWidth={selected ? 2.5 : 1.5}
+                                        fill="none"
+                                      />
+                                    ))}
+                                    {geometry.circleShapes.map((circle, index) => (
+                                      <circle
+                                        key={`${placement.id}-circle-${index}`}
+                                        cx={circle.center.x}
+                                        cy={circle.center.y}
+                                        r={circle.r}
+                                        fill="none"
+                                        stroke="#fbbf24"
+                                        strokeWidth={selected ? 2.5 : 1.5}
+                                      />
+                                    ))}
+                                    {geometry.arcPaths.map((path, index) => (
+                                      <path
+                                        key={`${placement.id}-arc-${index}`}
+                                        d={path}
+                                        fill="none"
+                                        stroke="#fbbf24"
+                                        strokeWidth={selected ? 2.5 : 1.5}
+                                      />
+                                    ))}
+                                    {nestingWorkspaceShowBoundingBoxes || !geometry.hasTrueGeometry ? (
+                                      <rect
+                                        x={placement.x}
+                                        y={placement.y}
+                                        width={width}
+                                        height={height}
+                                        fill="none"
+                                        stroke={!geometry.hasTrueGeometry ? "#fbbf24" : "rgba(148,163,184,0.72)"}
+                                        strokeDasharray="8 6"
+                                        strokeWidth="2"
+                                      />
+                                    ) : null}
+                                    {!geometry.hasTrueGeometry ? <title>No DXF geometry loaded — showing bounding box fallback</title> : null}
+                                    {selected ? (
+                                      <>
+                                        <text x={placement.x + 8} y={placement.y + 18} fill="#e5e7eb" fontSize="12">{part?.fileName ?? `Part ${placement.partId}`}</text>
+                                        <text x={placement.x + 8} y={placement.y + 34} fill="#94a3b8" fontSize="10">Rot {placement.rotation}°</text>
+                                      </>
+                                    ) : null}
+                                  </g>
+                                );
+                              })}
+                            </svg>
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div style={{ minHeight: 460, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid transparent", borderRadius: 8, color: UI.colors.muted }}>

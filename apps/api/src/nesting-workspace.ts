@@ -906,10 +906,16 @@ export class NestingWorkspaceService {
           if (code !== 0) settle(() => reject(new Error(`nesting worker exited with code ${code}`)));
         });
       });
-      const safePlacements = this.ensureNonOverlappingPlacements(workspace, parts, workerResult.placements);
+      // Always finish with the polygon-aware packer so spacing/collisions stay trustworthy
+      // even when the optimization worker returns overlapping or multi-sheet leftovers.
+      const packed = this.safeBottomLeftPack(workspace, parts);
       const requested = parts.reduce((sum, part) => sum + Math.max(1, Math.round(part.quantity || 1)), 0);
-      const unplacedCount = Math.max(workerResult.unplacedCount, Math.max(0, requested - safePlacements.length));
-      return this.finishAutoNest(workspaceId, workspace, safePlacements, { workerThread: true, unplacedCount });
+      const unplacedCount = Math.max(workerResult.unplacedCount, Math.max(0, requested - packed.length));
+      return this.finishAutoNest(workspaceId, workspace, packed, {
+        workerThread: true,
+        unplacedCount,
+        optimizedCandidates: workerResult.placements.length
+      });
     } catch {
       return this.autoNest(workspaceId);
     }
@@ -998,6 +1004,12 @@ export class NestingWorkspaceService {
     return this.safeBottomLeftPack(workspace, parts);
   }
 
+  private partFootprint(part: NestingWorkspacePartRecord, rotation: number) {
+    const polygon = transformedPartPolygon(part, 0, 0, rotation);
+    const box = boundsForPoints(polygon);
+    return { width: box.width, height: box.height, polygon, box };
+  }
+
   private safeBottomLeftPack(workspace: NestingWorkspaceRecord, parts: NestingWorkspacePartRecord[]) {
     const partsMap = new Map(parts.map((part) => [part.id, part]));
     const expanded = parts
@@ -1010,7 +1022,7 @@ export class NestingWorkspaceService {
     const usableHeight = Math.max(0, workspace.sheetHeight - workspace.border * 2);
     for (const part of expanded) {
       const canEverFit = rotations.some((rotation) => {
-        const size = rotatedSize(part, rotation);
+        const size = this.partFootprint(part, rotation);
         return size.width <= usableWidth + 0.001 && size.height <= usableHeight + 0.001;
       });
       if (!canEverFit) continue;
@@ -1049,13 +1061,13 @@ export class NestingWorkspaceService {
     spacing: number,
     parts: Map<number, NestingWorkspacePartRecord>
   ) {
-    const polygon = transformedPartPolygon(part, workspace.border, workspace.border, rotation);
-    const partBox = boundsForPoints(polygon);
+    const partBox = this.partFootprint(part, rotation).box;
     const candidates: Point[] = [{ x: workspace.border, y: workspace.border }];
     for (const placement of placements) {
       const placedPart = parts.get(placement.partId);
       if (!placedPart) continue;
-      const placedBox = boundsForPoints(transformedPartPolygon(placedPart, placement.x, placement.y, placement.rotation));
+      const placedPolygon = transformedPartPolygon(placedPart, placement.x, placement.y, placement.rotation);
+      const placedBox = boundsForPoints(placedPolygon);
       candidates.push(
         { x: placedBox.maxX + spacing, y: placedBox.minY },
         { x: placedBox.minX, y: placedBox.maxY + spacing },
@@ -1063,8 +1075,19 @@ export class NestingWorkspaceService {
         { x: workspace.border, y: placedBox.maxY + spacing },
         { x: placedBox.maxX + spacing, y: workspace.border },
         { x: Math.max(workspace.border, placedBox.minX - partBox.width - spacing), y: placedBox.minY },
-        { x: placedBox.minX, y: Math.max(workspace.border, placedBox.minY - partBox.height - spacing) }
+        { x: placedBox.minX, y: Math.max(workspace.border, placedBox.minY - partBox.height - spacing) },
+        { x: placedBox.maxX + spacing, y: Math.max(workspace.border, placedBox.maxY - partBox.height) },
+        { x: Math.max(workspace.border, placedBox.maxX - partBox.width), y: placedBox.maxY + spacing }
       );
+      // Edge samples help irregular DXF parts nest closer ("puzzle" fit).
+      for (let index = 0; index < placedPolygon.length; index += Math.max(1, Math.floor(placedPolygon.length / 8))) {
+        const point = placedPolygon[index];
+        candidates.push(
+          { x: point.x + spacing, y: placedBox.minY },
+          { x: placedBox.minX, y: point.y + spacing },
+          { x: point.x + spacing, y: point.y + spacing }
+        );
+      }
     }
     return candidates
       .map((point) => ({
