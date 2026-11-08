@@ -320,7 +320,12 @@ test("small parts do not nest inside cutouts marked unusable", () => {
       rectPart(45, 45, 1)
     ]
   });
-  assert.equal(plan.placements.length, 1);
+  assert.equal(plan.placements.length, 2);
+  assert.equal(new Set(plan.placements.map((placement) => placement.sheetIndex)).size, 2);
+  const host = plan.placements.find((placement) => Math.max(placement.width, placement.height) >= 150);
+  const guest = plan.placements.find((placement) => Math.max(placement.width, placement.height) < 150);
+  assert.ok(host && guest);
+  assert.notEqual(host.sheetIndex, guest.sheetIndex);
 });
 
 test("micro joins are added to long narrow parts", () => {

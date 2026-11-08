@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { backupDatabaseBeforeMigration, DatabaseSync } from "./db.js";
 import type { BrainCoreService } from "./brain-core.js";
 import { GeometryNormalizer, runAdvancedNesting, type DxfOriginalEntity, type NestPart, type NestWarning, type Point, type SheetSource } from "./nesting-engine.js";
+import { resolveNestingWorkerEntry } from "./nesting-worker-entry.js";
 import { addOffcut, listOffcuts, type OffcutRecord } from "./stock-material.js";
 
 export type NestingWorkspaceStatus = "draft" | "nested" | "exported" | "completed";
@@ -754,7 +755,7 @@ export class NestingWorkspaceService {
       outerContour: normalized.outerContour,
       holes: normalized.holes,
       simplifiedPolygon: normalized.simplifiedPolygon,
-      segments: normalized.segments.slice(0, 400),
+      segments: normalized.segments,
       originalEntities: normalized.originalDxfEntities,
       preview: normalized.outerContour.length ? normalized.outerContour : this.rectPolygon(normalized.width, normalized.height)
     };
@@ -849,14 +850,22 @@ export class NestingWorkspaceService {
   async autoNestInWorker(workspaceId: number) {
     const workspace = this.requireWorkspace(workspaceId);
     const parts = this.listParts(workspaceId);
-    const fastPlacements = this.safeBottomLeftPack(workspace, parts);
-    return this.finishAutoNest(workspaceId, workspace, fastPlacements, { workspacePacker: true, workerThread: false });
+    return this.autoNestInOptimizationWorker(workspaceId, workspace, parts);
   }
 
   private async autoNestInOptimizationWorker(workspaceId: number, workspace: NestingWorkspaceRecord, parts: NestingWorkspacePartRecord[]) {
+    const maxOptimizationMs = 10_000;
     try {
-      const placements = await new Promise<Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>>((resolve, reject) => {
-        const worker = new Worker(new URL("./nesting-workspace-worker.js", import.meta.url), {
+      const workerResult = await new Promise<{ placements: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; unplacedCount: number }>((resolve, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          fn();
+        };
+        const entry = resolveNestingWorkerEntry("nesting-workspace-worker");
+        const worker = new Worker(entry.filename, {
+          ...(entry.options ?? {}),
           workerData: {
             workspace: {
               border: workspace.border,
@@ -881,20 +890,32 @@ export class NestingWorkspaceService {
         });
         const timer = setTimeout(() => {
           worker.terminate().catch(() => undefined);
-          reject(new Error("nesting worker timed out"));
-        }, 3_000);
-        worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; error?: string }) => {
+          settle(() => reject(new Error("nesting worker timed out")));
+        }, maxOptimizationMs + 5_000);
+        worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; unplacedCount?: number; error?: string }) => {
           clearTimeout(timer);
-          if (message.error) reject(new Error(message.error));
-          else resolve(message.placements ?? []);
+          if (message.error) settle(() => reject(new Error(message.error)));
+          else settle(() => resolve({ placements: message.placements ?? [], unplacedCount: Math.max(0, Number(message.unplacedCount) || 0) }));
         });
         worker.once("error", (error) => {
           clearTimeout(timer);
-          reject(error);
+          settle(() => reject(error));
+        });
+        worker.once("exit", (code) => {
+          clearTimeout(timer);
+          if (code !== 0) settle(() => reject(new Error(`nesting worker exited with code ${code}`)));
         });
       });
-      const safePlacements = this.ensureNonOverlappingPlacements(workspace, parts, placements);
-      return this.finishAutoNest(workspaceId, workspace, safePlacements, { workerThread: true });
+      // Always finish with the polygon-aware packer so spacing/collisions stay trustworthy
+      // even when the optimization worker returns overlapping or multi-sheet leftovers.
+      const packed = this.safeBottomLeftPack(workspace, parts);
+      const requested = parts.reduce((sum, part) => sum + Math.max(1, Math.round(part.quantity || 1)), 0);
+      const unplacedCount = Math.max(workerResult.unplacedCount, Math.max(0, requested - packed.length));
+      return this.finishAutoNest(workspaceId, workspace, packed, {
+        workerThread: true,
+        unplacedCount,
+        optimizedCandidates: workerResult.placements.length
+      });
     } catch {
       return this.autoNest(workspaceId);
     }
@@ -952,7 +973,24 @@ export class NestingWorkspaceService {
       mirrored: false,
       isManual: false
     })).filter((placement) => Number.isFinite(placement.partId));
-    return this.ensureNonOverlappingPlacements(workspace, parts, placements);
+    const placedCounts = new Map<number, number>();
+    for (const placement of placements) {
+      placedCounts.set(placement.partId, (placedCounts.get(placement.partId) ?? 0) + 1);
+    }
+    const remainingParts = parts
+      .map((part) => ({
+        ...part,
+        quantity: Math.max(0, Math.max(1, Math.round(part.quantity || 1)) - (placedCounts.get(part.id) ?? 0))
+      }))
+      .filter((part) => part.quantity > 0);
+    if (!remainingParts.length) return this.ensureNonOverlappingPlacements(workspace, parts, placements);
+    const overflow = this.safeBottomLeftPack(workspace, remainingParts);
+    const sheetOffset = Math.max(0, ...placements.map((placement) => placement.sheetIndex), -1) + (placements.length ? 1 : 0);
+    const merged = [
+      ...placements,
+      ...overflow.map((placement) => ({ ...placement, sheetIndex: placement.sheetIndex + sheetOffset }))
+    ];
+    return this.ensureNonOverlappingPlacements(workspace, parts, merged);
   }
 
   private ensureNonOverlappingPlacements(
@@ -966,6 +1004,12 @@ export class NestingWorkspaceService {
     return this.safeBottomLeftPack(workspace, parts);
   }
 
+  private partFootprint(part: NestingWorkspacePartRecord, rotation: number) {
+    const polygon = transformedPartPolygon(part, 0, 0, rotation);
+    const box = boundsForPoints(polygon);
+    return { width: box.width, height: box.height, polygon, box };
+  }
+
   private safeBottomLeftPack(workspace: NestingWorkspaceRecord, parts: NestingWorkspacePartRecord[]) {
     const partsMap = new Map(parts.map((part) => [part.id, part]));
     const expanded = parts
@@ -974,9 +1018,16 @@ export class NestingWorkspaceService {
     const placements: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }> = [];
     const spacing = Math.max(0, workspace.spacing + workspace.kerf);
     const rotations = workspace.allowRotation ? [0, 90, 180, 270] : [0];
+    const usableWidth = Math.max(0, workspace.sheetWidth - workspace.border * 2);
+    const usableHeight = Math.max(0, workspace.sheetHeight - workspace.border * 2);
     for (const part of expanded) {
+      const canEverFit = rotations.some((rotation) => {
+        const size = this.partFootprint(part, rotation);
+        return size.width <= usableWidth + 0.001 && size.height <= usableHeight + 0.001;
+      });
+      if (!canEverFit) continue;
       let best: { sheetIndex: number; x: number; y: number; rotation: number; score: number } | null = null;
-      const maxSheet = Math.max(0, ...placements.map((placement) => placement.sheetIndex));
+      const maxSheet = Math.max(0, ...placements.map((placement) => placement.sheetIndex), -1);
       for (let sheetIndex = 0; sheetIndex <= maxSheet + 1; sheetIndex += 1) {
         const sheetPlacements = placements.filter((placement) => placement.sheetIndex === sheetIndex);
         for (const rotation of rotations) {
@@ -996,9 +1047,7 @@ export class NestingWorkspaceService {
         }
         if (best?.sheetIndex === sheetIndex) break;
       }
-      if (!best) {
-        best = { sheetIndex: Math.max(0, ...placements.map((placement) => placement.sheetIndex)) + 1, x: workspace.border, y: workspace.border, rotation: 0, score: 0 };
-      }
+      if (!best) continue;
       placements.push({ partId: part.id, sheetIndex: best.sheetIndex, x: best.x, y: best.y, rotation: best.rotation, mirrored: false, isManual: false });
     }
     return placements;
@@ -1012,13 +1061,13 @@ export class NestingWorkspaceService {
     spacing: number,
     parts: Map<number, NestingWorkspacePartRecord>
   ) {
-    const polygon = transformedPartPolygon(part, workspace.border, workspace.border, rotation);
-    const partBox = boundsForPoints(polygon);
+    const partBox = this.partFootprint(part, rotation).box;
     const candidates: Point[] = [{ x: workspace.border, y: workspace.border }];
     for (const placement of placements) {
       const placedPart = parts.get(placement.partId);
       if (!placedPart) continue;
-      const placedBox = boundsForPoints(transformedPartPolygon(placedPart, placement.x, placement.y, placement.rotation));
+      const placedPolygon = transformedPartPolygon(placedPart, placement.x, placement.y, placement.rotation);
+      const placedBox = boundsForPoints(placedPolygon);
       candidates.push(
         { x: placedBox.maxX + spacing, y: placedBox.minY },
         { x: placedBox.minX, y: placedBox.maxY + spacing },
@@ -1026,8 +1075,19 @@ export class NestingWorkspaceService {
         { x: workspace.border, y: placedBox.maxY + spacing },
         { x: placedBox.maxX + spacing, y: workspace.border },
         { x: Math.max(workspace.border, placedBox.minX - partBox.width - spacing), y: placedBox.minY },
-        { x: placedBox.minX, y: Math.max(workspace.border, placedBox.minY - partBox.height - spacing) }
+        { x: placedBox.minX, y: Math.max(workspace.border, placedBox.minY - partBox.height - spacing) },
+        { x: placedBox.maxX + spacing, y: Math.max(workspace.border, placedBox.maxY - partBox.height) },
+        { x: Math.max(workspace.border, placedBox.maxX - partBox.width), y: placedBox.maxY + spacing }
       );
+      // Edge samples help irregular DXF parts nest closer ("puzzle" fit).
+      for (let index = 0; index < placedPolygon.length; index += Math.max(1, Math.floor(placedPolygon.length / 8))) {
+        const point = placedPolygon[index];
+        candidates.push(
+          { x: point.x + spacing, y: placedBox.minY },
+          { x: placedBox.minX, y: point.y + spacing },
+          { x: point.x + spacing, y: point.y + spacing }
+        );
+      }
     }
     return candidates
       .map((point) => ({
@@ -1333,8 +1393,24 @@ export class NestingWorkspaceService {
     if (!workspace) return [];
     const warnings: NestWarning[] = [];
     const placements = this.listPlacements(workspaceId);
+    const parts = this.listParts(workspaceId);
     if (placements.some((placement) => placement.hasCollision)) warnings.push({ severity: "critical", message: "One or more parts overlap", payload: { workspaceId } });
     if (placements.some((placement) => placement.isOutsideSheet)) warnings.push({ severity: "critical", message: "One or more parts are outside the sheet/offcut border", payload: { workspaceId } });
+    const placedCounts = new Map<number, number>();
+    for (const placement of placements) {
+      placedCounts.set(placement.partId, (placedCounts.get(placement.partId) ?? 0) + 1);
+    }
+    for (const part of parts) {
+      const placed = placedCounts.get(part.id) ?? 0;
+      const needed = Math.max(1, Math.round(part.quantity || 1));
+      if (placed < needed) {
+        warnings.push({
+          severity: "critical",
+          message: `${part.fileName}: only ${placed} of ${needed} placed — remaining parts do not fit the sheet`,
+          payload: { partId: part.id, placed, needed }
+        });
+      }
+    }
     for (const placement of placements) {
       const part = this.getPart(placement.partId);
       if (!part) continue;
@@ -1429,6 +1505,46 @@ export class NestingWorkspaceService {
       lines.push("0", "LWPOLYLINE", ...layer(layerName), "90", String(points.length), "70", "1");
       for (const point of points) lines.push("10", String(Math.round(point.x * 1000) / 1000), "20", String(Math.round(point.y * 1000) / 1000));
     };
+    const emitEntity = (entity: DxfOriginalEntity, layerName: string) => {
+      lines.push("0", entity.type, ...layer(layerName));
+      for (const [code, entries] of Object.entries(entity.values)) {
+        if (code === "8") continue;
+        for (const value of entries) lines.push(code, value);
+      }
+    };
+    const transformEntity = (
+      entity: DxfOriginalEntity,
+      placement: NestingPlacementRecord,
+      sourceBounds: { minX: number; minY: number },
+      rotatedBounds: { minX: number; minY: number }
+    ) => {
+      const values = Object.fromEntries(Object.entries(entity.values).map(([code, entries]) => [code, [...entries]])) as Record<string, string[]>;
+      const setPoint = (xCode: string, yCode: string, index = 0) => {
+        const x = Number(values[xCode]?.[index]);
+        const y = Number(values[yCode]?.[index]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        const local = { x: x - sourceBounds.minX, y: y - sourceBounds.minY };
+        const point = transformPoint(local, placement.x, placement.y, placement.rotation, rotatedBounds);
+        values[xCode][index] = String(Math.round(point.x * 1000) / 1000);
+        values[yCode][index] = String(Math.round(point.y * 1000) / 1000);
+      };
+      if (entity.type === "LWPOLYLINE") {
+        const count = Math.min(values["10"]?.length ?? 0, values["20"]?.length ?? 0);
+        for (let index = 0; index < count; index += 1) setPoint("10", "20", index);
+      } else {
+        setPoint("10", "20");
+        setPoint("11", "21");
+        setPoint("12", "22");
+        setPoint("13", "23");
+      }
+      if (entity.type === "ARC") {
+        for (const code of ["50", "51"]) {
+          const angle = Number(values[code]?.[0]);
+          if (Number.isFinite(angle)) values[code][0] = String((((angle + placement.rotation) % 360) + 360) % 360);
+        }
+      }
+      return { type: entity.type, layer: "CUT", values };
+    };
     const transformedContour = (points: Point[], placement: NestingPlacementRecord) => {
       const rotated = points.map((point) => rotatePoint(point, placement.rotation));
       const rotatedBounds = rotated.length ? boundsForPoints(rotated) : { minX: 0, minY: 0 };
@@ -1445,33 +1561,45 @@ export class NestingWorkspaceService {
       if (!part) continue;
       const size = rotatedSize(part, placement.rotation);
       const layerName = placement.hasCollision ? "WARNINGS" : "CUT";
-      const outerContours = part.previewGeometry.outerContours.length ? part.previewGeometry.outerContours : [polygonFromPart(part)];
-      for (const contour of outerContours) polyline(transformedContour(contour, placement), layerName);
-      for (const hole of part.previewGeometry.innerHoles) polyline(transformedContour(hole, placement), layerName);
-      const sourcePoints = [...outerContours.flat(), ...part.previewGeometry.innerHoles.flat()];
-      for (const circle of part.previewGeometry.circles) {
-        const center = transformedCenter({ x: circle.cx, y: circle.cy }, placement, sourcePoints);
-        lines.push("0", "CIRCLE", ...layer(layerName), "10", String(Math.round(center.x * 1000) / 1000), "20", String(Math.round(center.y * 1000) / 1000), "30", "0", "40", String(Math.round(circle.r * 1000) / 1000));
-      }
-      for (const arc of part.previewGeometry.arcs) {
-        const center = transformedCenter({ x: arc.cx, y: arc.cy }, placement, sourcePoints);
-        lines.push(
-          "0",
-          "ARC",
-          ...layer(layerName),
-          "10",
-          String(Math.round(center.x * 1000) / 1000),
-          "20",
-          String(Math.round(center.y * 1000) / 1000),
-          "30",
-          "0",
-          "40",
-          String(Math.round(arc.r * 1000) / 1000),
-          "50",
-          String((arc.startAngle + placement.rotation) % 360),
-          "51",
-          String((arc.endAngle + placement.rotation) % 360)
-        );
+      const geometry = parseJson(part.geometryJson);
+      const originalEntities = Array.isArray(geometry.originalEntities) ? geometry.originalEntities as DxfOriginalEntity[] : [];
+      if (originalEntities.length) {
+        const sourcePoints = originalEntities.flatMap(entityPreviewPoints);
+        const sourceBounds = sourcePoints.length ? boundsForPoints(sourcePoints) : { minX: 0, minY: 0, maxX: part.width, maxY: part.height };
+        const localPoints = sourcePoints.map((point) => ({ x: point.x - sourceBounds.minX, y: point.y - sourceBounds.minY }));
+        const rotatedBounds = localPoints.length
+          ? boundsForPoints(localPoints.map((point) => rotatePoint(point, placement.rotation)))
+          : { minX: 0, minY: 0, maxX: part.width, maxY: part.height };
+        for (const entity of originalEntities) emitEntity(transformEntity(entity, placement, sourceBounds, rotatedBounds), layerName);
+      } else {
+        const outerContours = part.previewGeometry.outerContours.length ? part.previewGeometry.outerContours : [polygonFromPart(part)];
+        for (const contour of outerContours) polyline(transformedContour(contour, placement), layerName);
+        for (const hole of part.previewGeometry.innerHoles) polyline(transformedContour(hole, placement), layerName);
+        const sourcePoints = [...outerContours.flat(), ...part.previewGeometry.innerHoles.flat()];
+        for (const circle of part.previewGeometry.circles) {
+          const center = transformedCenter({ x: circle.cx, y: circle.cy }, placement, sourcePoints);
+          lines.push("0", "CIRCLE", ...layer(layerName), "10", String(Math.round(center.x * 1000) / 1000), "20", String(Math.round(center.y * 1000) / 1000), "30", "0", "40", String(Math.round(circle.r * 1000) / 1000));
+        }
+        for (const arc of part.previewGeometry.arcs) {
+          const center = transformedCenter({ x: arc.cx, y: arc.cy }, placement, sourcePoints);
+          lines.push(
+            "0",
+            "ARC",
+            ...layer(layerName),
+            "10",
+            String(Math.round(center.x * 1000) / 1000),
+            "20",
+            String(Math.round(center.y * 1000) / 1000),
+            "30",
+            "0",
+            "40",
+            String(Math.round(arc.r * 1000) / 1000),
+            "50",
+            String((arc.startAngle + placement.rotation) % 360),
+            "51",
+            String((arc.endAngle + placement.rotation) % 360)
+          );
+        }
       }
       line(placement.x, placement.y + Math.min(10, size.height / 2), placement.x + Math.min(workspace.leadInLength, size.width / 2), placement.y + Math.min(10, size.height / 2), "LEAD_IN");
       if (workspace.enableMicroJoins && Math.max(size.width, size.height) / Math.max(1, Math.min(size.width, size.height)) >= 5) {
