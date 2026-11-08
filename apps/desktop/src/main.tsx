@@ -3486,6 +3486,32 @@ function decodeDxfArrayBuffer(buf: ArrayBuffer) {
   return new TextDecoder("utf-8", { fatal: false }).decode(buf);
 }
 
+function buildSimpleDxfFromSegments(segments: DxfSegment[], name = "Part") {
+  const lines = ["0", "SECTION", "2", "ENTITIES", "0", "TEXT", "8", "TEXT", "10", "0", "20", "0", "40", "5", "1", name];
+  for (const segment of segments) {
+    lines.push(
+      "0",
+      "LINE",
+      "8",
+      segment.layer || "0",
+      "10",
+      String(segment.x1),
+      "20",
+      String(segment.y1),
+      "30",
+      "0",
+      "11",
+      String(segment.x2),
+      "21",
+      String(segment.y2),
+      "31",
+      "0"
+    );
+  }
+  lines.push("0", "ENDSEC", "0", "EOF");
+  return `${lines.join("\n")}\n`;
+}
+
 function decodeBase64ToArrayBuffer(base64: string) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -8130,6 +8156,33 @@ function App() {
     setNestingStudioExport(null);
     try {
       const selectedOffcut = nestingStudioOffcuts.find((offcut) => offcut.id === nestingStudioSelectedOffcutId) ?? null;
+      const workspaceParts = nestingWorkspaceActive?.parts ?? [];
+      const parts = workspaceParts.map((part, index) => {
+        let polygon: Array<{ x: number; y: number }> | undefined;
+        try {
+          const geometry = JSON.parse(part.geometryJson || "{}") as {
+            collisionPolygon?: Array<{ x: number; y: number }>;
+            simplifiedPolygon?: Array<{ x: number; y: number }>;
+            outerContour?: Array<{ x: number; y: number }>;
+            previewGeometry?: NestingPreviewGeometry;
+          };
+          polygon =
+            (Array.isArray(geometry.collisionPolygon) && geometry.collisionPolygon.length >= 3 ? geometry.collisionPolygon : undefined) ||
+            (Array.isArray(geometry.simplifiedPolygon) && geometry.simplifiedPolygon.length >= 3 ? geometry.simplifiedPolygon : undefined) ||
+            (Array.isArray(geometry.outerContour) && geometry.outerContour.length >= 3 ? geometry.outerContour : undefined) ||
+            geometry.previewGeometry?.outerContours?.[0];
+        } catch {
+          polygon = undefined;
+        }
+        return {
+          id: String(part.id || `studio-part-${index + 1}`),
+          name: part.fileName || `Part ${index + 1}`,
+          quantity: Math.max(1, Math.round(part.quantity || 1)),
+          width: part.width,
+          height: part.height,
+          polygon
+        };
+      });
       const res = await apiFetch("/api/nesting/run", {
         method: "POST",
         body: JSON.stringify({
@@ -8144,6 +8197,8 @@ function App() {
             spacing: Number(nestingStudioSpacing),
             border: Number(nestingStudioBorder)
           },
+          parts,
+          demo: parts.length === 0,
           maxOptimizationMs
         })
       });
@@ -8151,6 +8206,9 @@ function App() {
       if (!res.ok || !data?.result) {
         setNestingStudioError(data?.error ?? "Failed to run nesting.");
         return;
+      }
+      if (parts.length === 0) {
+        setNestingStudioError("No nest-workspace parts found — ran sample demo parts. Add parts in Nest Program for real nests.");
       }
       const sheetWidth = Math.max(1, Number(selectedOffcut?.width ?? nestingStudioSheetWidth) || 3000);
       const sheetHeight = Math.max(1, Number(selectedOffcut?.height ?? nestingStudioSheetHeight) || 1500);
@@ -8665,21 +8723,50 @@ function App() {
       setNestingWorkspaceLoading(false);
       return;
     }
-    const part = job.jobDxfParts?.[0];
+    const parts = job.jobDxfParts?.length
+      ? job.jobDxfParts
+      : [{
+          id: `job-${job.id}-fallback`,
+          name: job.title,
+          quantity: Math.max(1, job.quantityExpected ?? 1),
+          widthMm: 100,
+          heightMm: 100,
+          cutLengthMm: 400,
+          pierceCount: 1,
+          layer: "0",
+          segmentCount: 0,
+          partDnaId: undefined as number | undefined,
+          sourceSegments: undefined as DxfSegment[] | undefined
+        }];
     try {
-      await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
-        method: "POST",
-        body: JSON.stringify({
-          jobId: job.id,
-          fileName: part?.name ?? job.title,
-          quantity: part?.quantity ?? 1,
-          width: part?.widthMm ?? 100,
-          height: part?.heightMm ?? 100,
-          cutLength: part?.cutLengthMm ?? 400,
-          pierceCount: part?.pierceCount ?? 1,
-          partDnaId: part?.partDnaId ?? null
-        })
-      });
+      let added = 0;
+      for (const part of parts) {
+        const quantity = Math.max(1, Math.round(Number(part.quantity) || 1));
+        const width = Math.max(1, Number(part.widthMm) || 100);
+        const height = Math.max(1, Number(part.heightMm) || 100);
+        const rawDxf = Array.isArray(part.sourceSegments) && part.sourceSegments.length
+          ? buildSimpleDxfFromSegments(part.sourceSegments, part.name || job.title)
+          : undefined;
+        const res = await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+          method: "POST",
+          body: JSON.stringify({
+            jobId: job.id,
+            fileName: part.name || job.title,
+            quantity,
+            width,
+            height,
+            cutLength: Math.max(1, Number(part.cutLengthMm) || (width + height) * 2),
+            pierceCount: Math.max(1, Number(part.pierceCount) || 1),
+            partDnaId: part.partDnaId ?? null,
+            rawDxf
+          })
+        });
+        if (res.ok) added += 1;
+      }
+      if (!added) {
+        setNestingWorkspaceError("Failed to add job parts to nest.");
+        return;
+      }
       await refreshNestingWorkspaceData(workspace.id);
     } finally {
       setNestingWorkspaceLoading(false);
@@ -8695,21 +8782,40 @@ function App() {
       setNestingWorkspaceLoading(false);
       return;
     }
-    const part = Object.values(quote.sections ?? {}).flatMap((section) => section.parts ?? [])[0];
+    const parts = Object.values(quote.sections ?? {}).flatMap((section) => section.parts ?? []);
+    const entries = parts.length
+      ? parts
+      : [{
+          name: quote.title,
+          quantity: 1,
+          lengthMm: 100,
+          widthMm: 100,
+          partDnaId: undefined as number | undefined
+        }];
     try {
-      await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
-        method: "POST",
-        body: JSON.stringify({
-          quoteId: quote.id,
-          fileName: part?.name ?? quote.title,
-          quantity: part?.quantity ?? 1,
-          width: part?.lengthMm ?? 100,
-          height: part?.widthMm ?? 100,
-          cutLength: ((part?.lengthMm ?? 100) + (part?.widthMm ?? 100)) * 2,
-          pierceCount: 1,
-          partDnaId: part?.partDnaId ?? null
-        })
-      });
+      let added = 0;
+      for (const part of entries) {
+        const width = Math.max(1, Number(part.lengthMm) || 100);
+        const height = Math.max(1, Number(part.widthMm) || 100);
+        const res = await apiFetch(`/api/nesting/workspaces/${workspace.id}/parts`, {
+          method: "POST",
+          body: JSON.stringify({
+            quoteId: quote.id,
+            fileName: part.name || quote.title,
+            quantity: Math.max(1, Math.round(Number(part.quantity) || 1)),
+            width,
+            height,
+            cutLength: (width + height) * 2,
+            pierceCount: 1,
+            partDnaId: part.partDnaId ?? null
+          })
+        });
+        if (res.ok) added += 1;
+      }
+      if (!added) {
+        setNestingWorkspaceError("Failed to add quote parts to nest.");
+        return;
+      }
       await refreshNestingWorkspaceData(workspace.id);
     } finally {
       setNestingWorkspaceLoading(false);
@@ -8754,17 +8860,25 @@ function App() {
 
   async function runNestingWorkspaceAutoNest() {
     if (!nestingWorkspaceActive) return;
+    if (!(nestingWorkspaceActive.parts ?? []).length) {
+      setNestingWorkspaceError("Add at least one part before running the nest program.");
+      return;
+    }
     setNestingWorkspaceLoading(true);
     setNestingWorkspaceError(null);
     try {
       const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/auto-nest`, { method: "POST" });
-      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord } | null;
+      const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord; warnings?: NestingWorkspaceRecord["warnings"] } | null;
       if (!res.ok) {
         setNestingWorkspaceError(data?.error ?? "Failed to auto nest.");
         return;
       }
       await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
       await refreshBrainCenter();
+      const critical = (data?.workspace?.warnings ?? data?.warnings ?? []).filter((warning) => warning.severity === "critical");
+      if (critical.length) {
+        setNestingWorkspaceError(critical.map((warning) => warning.message).join(" · "));
+      }
     } catch (error) {
       setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to auto nest.");
     } finally {
@@ -18228,9 +18342,11 @@ function App() {
             <div style={{ display: "grid", gap: 16 }}>
               <Card>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 12 }}>
-                  <SectionHeader title="Nesting" subtitle="Manual and AI nesting with sheet/offcut selection, puzzle-fit placement, warnings, and customer-named DXF exports." />
+                  <SectionHeader title="Nesting" subtitle="Uses Nest Program parts when available; otherwise sample demo parts. Sheet/offcut selection, puzzle-fit placement, warnings, and customer-named DXF exports." />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <Button onClick={() => void runNestingStudio()} variant="primary" disabled={nestingStudioLoading}>Auto Nest</Button>
+                    <Button onClick={() => void runNestingStudio()} variant="primary" disabled={nestingStudioLoading}>
+                      {nestingStudioLoading ? "Nesting…" : "Auto Nest"}
+                    </Button>
                     <Button onClick={() => void runNestingStudio(30000)} variant="secondary" disabled={nestingStudioLoading}>Optimize More</Button>
                     <Button onClick={rotateSelectedNestingStudioPlacement} variant="secondary" disabled={!nestingStudioSelectedPartId || nestingStudioLoading}>Rotate 90°</Button>
                     <Button onClick={deleteSelectedNestingStudioPlacement} variant="secondary" disabled={!nestingStudioSelectedPartId || nestingStudioLoading}>Delete Placement</Button>
@@ -18368,7 +18484,9 @@ function App() {
                   <SectionHeader title="Qouter X Nest Program" />
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Button onClick={() => void saveNestingWorkspaceSettings()} variant="primary" disabled={nestingWorkspaceLoading}>Save Nest</Button>
-                    <Button onClick={() => void runNestingWorkspaceAutoNest()} variant="secondary" disabled={!nestingWorkspaceActive || nestingWorkspaceLoading}>Run Nest Program</Button>
+                    <Button onClick={() => void runNestingWorkspaceAutoNest()} variant="secondary" disabled={!nestingWorkspaceActive || nestingWorkspaceLoading}>
+                      {nestingWorkspaceLoading ? "Nesting…" : "Run Nest Program"}
+                    </Button>
                     <Button onClick={() => setNestingWorkspaceManualMode((value) => !value)} variant="secondary">Manual Nest Mode</Button>
                     <Button onClick={() => void exportNestingWorkspaceDxf()} variant="secondary" disabled={!nestingWorkspaceActive || nestingWorkspaceLoading}>Export DXF</Button>
                   </div>

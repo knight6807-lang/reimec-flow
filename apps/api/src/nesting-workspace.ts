@@ -755,7 +755,7 @@ export class NestingWorkspaceService {
       outerContour: normalized.outerContour,
       holes: normalized.holes,
       simplifiedPolygon: normalized.simplifiedPolygon,
-      segments: normalized.segments.slice(0, 400),
+      segments: normalized.segments,
       originalEntities: normalized.originalDxfEntities,
       preview: normalized.outerContour.length ? normalized.outerContour : this.rectPolygon(normalized.width, normalized.height)
     };
@@ -892,7 +892,7 @@ export class NestingWorkspaceService {
           worker.terminate().catch(() => undefined);
           settle(() => reject(new Error("nesting worker timed out")));
         }, maxOptimizationMs + 5_000);
-        worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; error?: string }) => {
+        worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; unplacedCount?: number; error?: string }) => {
           clearTimeout(timer);
           if (message.error) settle(() => reject(new Error(message.error)));
           else settle(() => resolve(message.placements ?? []));
@@ -987,9 +987,16 @@ export class NestingWorkspaceService {
     const placements: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }> = [];
     const spacing = Math.max(0, workspace.spacing + workspace.kerf);
     const rotations = workspace.allowRotation ? [0, 90, 180, 270] : [0];
+    const usableWidth = Math.max(0, workspace.sheetWidth - workspace.border * 2);
+    const usableHeight = Math.max(0, workspace.sheetHeight - workspace.border * 2);
     for (const part of expanded) {
+      const canEverFit = rotations.some((rotation) => {
+        const size = rotatedSize(part, rotation);
+        return size.width <= usableWidth + 0.001 && size.height <= usableHeight + 0.001;
+      });
+      if (!canEverFit) continue;
       let best: { sheetIndex: number; x: number; y: number; rotation: number; score: number } | null = null;
-      const maxSheet = Math.max(0, ...placements.map((placement) => placement.sheetIndex));
+      const maxSheet = Math.max(0, ...placements.map((placement) => placement.sheetIndex), -1);
       for (let sheetIndex = 0; sheetIndex <= maxSheet + 1; sheetIndex += 1) {
         const sheetPlacements = placements.filter((placement) => placement.sheetIndex === sheetIndex);
         for (const rotation of rotations) {
@@ -1009,9 +1016,7 @@ export class NestingWorkspaceService {
         }
         if (best?.sheetIndex === sheetIndex) break;
       }
-      if (!best) {
-        best = { sheetIndex: Math.max(0, ...placements.map((placement) => placement.sheetIndex)) + 1, x: workspace.border, y: workspace.border, rotation: 0, score: 0 };
-      }
+      if (!best) continue;
       placements.push({ partId: part.id, sheetIndex: best.sheetIndex, x: best.x, y: best.y, rotation: best.rotation, mirrored: false, isManual: false });
     }
     return placements;
@@ -1346,8 +1351,24 @@ export class NestingWorkspaceService {
     if (!workspace) return [];
     const warnings: NestWarning[] = [];
     const placements = this.listPlacements(workspaceId);
+    const parts = this.listParts(workspaceId);
     if (placements.some((placement) => placement.hasCollision)) warnings.push({ severity: "critical", message: "One or more parts overlap", payload: { workspaceId } });
     if (placements.some((placement) => placement.isOutsideSheet)) warnings.push({ severity: "critical", message: "One or more parts are outside the sheet/offcut border", payload: { workspaceId } });
+    const placedCounts = new Map<number, number>();
+    for (const placement of placements) {
+      placedCounts.set(placement.partId, (placedCounts.get(placement.partId) ?? 0) + 1);
+    }
+    for (const part of parts) {
+      const placed = placedCounts.get(part.id) ?? 0;
+      const needed = Math.max(1, Math.round(part.quantity || 1));
+      if (placed < needed) {
+        warnings.push({
+          severity: "critical",
+          message: `${part.fileName}: only ${placed} of ${needed} placed — remaining parts do not fit the sheet`,
+          payload: { partId: part.id, placed, needed }
+        });
+      }
+    }
     for (const placement of placements) {
       const part = this.getPart(placement.partId);
       if (!part) continue;

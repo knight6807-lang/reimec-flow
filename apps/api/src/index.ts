@@ -9385,6 +9385,11 @@ app.post("/api/nesting/run", authRequired, async (req: AuthedRequest, res) => {
       return;
     }
     const rawParts = Array.isArray(body.parts) ? body.parts : [];
+    const allowDemoParts = body.demo === true;
+    if (!rawParts.length && !allowDemoParts) {
+      res.status(400).json({ error: "Add at least one part before running nesting." });
+      return;
+    }
     const parts: NestPart[] = rawParts.length
       ? rawParts.map((part: Record<string, unknown>, index: number) => ({
           id: typeof part.id === "string" ? part.id : `part-${index + 1}`,
@@ -9432,6 +9437,12 @@ app.post("/api/nesting/run", authRequired, async (req: AuthedRequest, res) => {
       maxOptimizationMs: Number(body.maxOptimizationMs) || 10000,
       angleStepDegrees: Number(body.angleStepDegrees) || undefined
     });
+    if (result.unplaced?.length) {
+      result.warnings = [
+        ...(result.warnings ?? []),
+        `${result.unplaced.length} part instance(s) could not fit on the sheet.`
+      ];
+    }
     if ((result.heatScore ?? 0) >= 45 || result.warnings.some((warning) => /heat|warp|burn|thin web/i.test(warning))) {
       try {
         getBrainCoreDb().eventService.recordEvent({
