@@ -856,7 +856,7 @@ export class NestingWorkspaceService {
   private async autoNestInOptimizationWorker(workspaceId: number, workspace: NestingWorkspaceRecord, parts: NestingWorkspacePartRecord[]) {
     const maxOptimizationMs = 10_000;
     try {
-      const placements = await new Promise<Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>>((resolve, reject) => {
+      const workerResult = await new Promise<{ placements: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; unplacedCount: number }>((resolve, reject) => {
         let settled = false;
         const settle = (fn: () => void) => {
           if (settled) return;
@@ -895,7 +895,7 @@ export class NestingWorkspaceService {
         worker.once("message", (message: { placements?: Array<{ partId: number; sheetIndex: number; x: number; y: number; rotation: number; mirrored: boolean; isManual: boolean }>; unplacedCount?: number; error?: string }) => {
           clearTimeout(timer);
           if (message.error) settle(() => reject(new Error(message.error)));
-          else settle(() => resolve(message.placements ?? []));
+          else settle(() => resolve({ placements: message.placements ?? [], unplacedCount: Math.max(0, Number(message.unplacedCount) || 0) }));
         });
         worker.once("error", (error) => {
           clearTimeout(timer);
@@ -906,8 +906,10 @@ export class NestingWorkspaceService {
           if (code !== 0) settle(() => reject(new Error(`nesting worker exited with code ${code}`)));
         });
       });
-      const safePlacements = this.ensureNonOverlappingPlacements(workspace, parts, placements);
-      return this.finishAutoNest(workspaceId, workspace, safePlacements, { workerThread: true });
+      const safePlacements = this.ensureNonOverlappingPlacements(workspace, parts, workerResult.placements);
+      const requested = parts.reduce((sum, part) => sum + Math.max(1, Math.round(part.quantity || 1)), 0);
+      const unplacedCount = Math.max(workerResult.unplacedCount, Math.max(0, requested - safePlacements.length));
+      return this.finishAutoNest(workspaceId, workspace, safePlacements, { workerThread: true, unplacedCount });
     } catch {
       return this.autoNest(workspaceId);
     }
@@ -965,7 +967,24 @@ export class NestingWorkspaceService {
       mirrored: false,
       isManual: false
     })).filter((placement) => Number.isFinite(placement.partId));
-    return this.ensureNonOverlappingPlacements(workspace, parts, placements);
+    const placedCounts = new Map<number, number>();
+    for (const placement of placements) {
+      placedCounts.set(placement.partId, (placedCounts.get(placement.partId) ?? 0) + 1);
+    }
+    const remainingParts = parts
+      .map((part) => ({
+        ...part,
+        quantity: Math.max(0, Math.max(1, Math.round(part.quantity || 1)) - (placedCounts.get(part.id) ?? 0))
+      }))
+      .filter((part) => part.quantity > 0);
+    if (!remainingParts.length) return this.ensureNonOverlappingPlacements(workspace, parts, placements);
+    const overflow = this.safeBottomLeftPack(workspace, remainingParts);
+    const sheetOffset = Math.max(0, ...placements.map((placement) => placement.sheetIndex), -1) + (placements.length ? 1 : 0);
+    const merged = [
+      ...placements,
+      ...overflow.map((placement) => ({ ...placement, sheetIndex: placement.sheetIndex + sheetOffset }))
+    ];
+    return this.ensureNonOverlappingPlacements(workspace, parts, merged);
   }
 
   private ensureNonOverlappingPlacements(
@@ -1463,6 +1482,46 @@ export class NestingWorkspaceService {
       lines.push("0", "LWPOLYLINE", ...layer(layerName), "90", String(points.length), "70", "1");
       for (const point of points) lines.push("10", String(Math.round(point.x * 1000) / 1000), "20", String(Math.round(point.y * 1000) / 1000));
     };
+    const emitEntity = (entity: DxfOriginalEntity, layerName: string) => {
+      lines.push("0", entity.type, ...layer(layerName));
+      for (const [code, entries] of Object.entries(entity.values)) {
+        if (code === "8") continue;
+        for (const value of entries) lines.push(code, value);
+      }
+    };
+    const transformEntity = (
+      entity: DxfOriginalEntity,
+      placement: NestingPlacementRecord,
+      sourceBounds: { minX: number; minY: number },
+      rotatedBounds: { minX: number; minY: number }
+    ) => {
+      const values = Object.fromEntries(Object.entries(entity.values).map(([code, entries]) => [code, [...entries]])) as Record<string, string[]>;
+      const setPoint = (xCode: string, yCode: string, index = 0) => {
+        const x = Number(values[xCode]?.[index]);
+        const y = Number(values[yCode]?.[index]);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        const local = { x: x - sourceBounds.minX, y: y - sourceBounds.minY };
+        const point = transformPoint(local, placement.x, placement.y, placement.rotation, rotatedBounds);
+        values[xCode][index] = String(Math.round(point.x * 1000) / 1000);
+        values[yCode][index] = String(Math.round(point.y * 1000) / 1000);
+      };
+      if (entity.type === "LWPOLYLINE") {
+        const count = Math.min(values["10"]?.length ?? 0, values["20"]?.length ?? 0);
+        for (let index = 0; index < count; index += 1) setPoint("10", "20", index);
+      } else {
+        setPoint("10", "20");
+        setPoint("11", "21");
+        setPoint("12", "22");
+        setPoint("13", "23");
+      }
+      if (entity.type === "ARC") {
+        for (const code of ["50", "51"]) {
+          const angle = Number(values[code]?.[0]);
+          if (Number.isFinite(angle)) values[code][0] = String((((angle + placement.rotation) % 360) + 360) % 360);
+        }
+      }
+      return { type: entity.type, layer: "CUT", values };
+    };
     const transformedContour = (points: Point[], placement: NestingPlacementRecord) => {
       const rotated = points.map((point) => rotatePoint(point, placement.rotation));
       const rotatedBounds = rotated.length ? boundsForPoints(rotated) : { minX: 0, minY: 0 };
@@ -1479,33 +1538,45 @@ export class NestingWorkspaceService {
       if (!part) continue;
       const size = rotatedSize(part, placement.rotation);
       const layerName = placement.hasCollision ? "WARNINGS" : "CUT";
-      const outerContours = part.previewGeometry.outerContours.length ? part.previewGeometry.outerContours : [polygonFromPart(part)];
-      for (const contour of outerContours) polyline(transformedContour(contour, placement), layerName);
-      for (const hole of part.previewGeometry.innerHoles) polyline(transformedContour(hole, placement), layerName);
-      const sourcePoints = [...outerContours.flat(), ...part.previewGeometry.innerHoles.flat()];
-      for (const circle of part.previewGeometry.circles) {
-        const center = transformedCenter({ x: circle.cx, y: circle.cy }, placement, sourcePoints);
-        lines.push("0", "CIRCLE", ...layer(layerName), "10", String(Math.round(center.x * 1000) / 1000), "20", String(Math.round(center.y * 1000) / 1000), "30", "0", "40", String(Math.round(circle.r * 1000) / 1000));
-      }
-      for (const arc of part.previewGeometry.arcs) {
-        const center = transformedCenter({ x: arc.cx, y: arc.cy }, placement, sourcePoints);
-        lines.push(
-          "0",
-          "ARC",
-          ...layer(layerName),
-          "10",
-          String(Math.round(center.x * 1000) / 1000),
-          "20",
-          String(Math.round(center.y * 1000) / 1000),
-          "30",
-          "0",
-          "40",
-          String(Math.round(arc.r * 1000) / 1000),
-          "50",
-          String((arc.startAngle + placement.rotation) % 360),
-          "51",
-          String((arc.endAngle + placement.rotation) % 360)
-        );
+      const geometry = parseJson(part.geometryJson);
+      const originalEntities = Array.isArray(geometry.originalEntities) ? geometry.originalEntities as DxfOriginalEntity[] : [];
+      if (originalEntities.length) {
+        const sourcePoints = originalEntities.flatMap(entityPreviewPoints);
+        const sourceBounds = sourcePoints.length ? boundsForPoints(sourcePoints) : { minX: 0, minY: 0, maxX: part.width, maxY: part.height };
+        const localPoints = sourcePoints.map((point) => ({ x: point.x - sourceBounds.minX, y: point.y - sourceBounds.minY }));
+        const rotatedBounds = localPoints.length
+          ? boundsForPoints(localPoints.map((point) => rotatePoint(point, placement.rotation)))
+          : { minX: 0, minY: 0, maxX: part.width, maxY: part.height };
+        for (const entity of originalEntities) emitEntity(transformEntity(entity, placement, sourceBounds, rotatedBounds), layerName);
+      } else {
+        const outerContours = part.previewGeometry.outerContours.length ? part.previewGeometry.outerContours : [polygonFromPart(part)];
+        for (const contour of outerContours) polyline(transformedContour(contour, placement), layerName);
+        for (const hole of part.previewGeometry.innerHoles) polyline(transformedContour(hole, placement), layerName);
+        const sourcePoints = [...outerContours.flat(), ...part.previewGeometry.innerHoles.flat()];
+        for (const circle of part.previewGeometry.circles) {
+          const center = transformedCenter({ x: circle.cx, y: circle.cy }, placement, sourcePoints);
+          lines.push("0", "CIRCLE", ...layer(layerName), "10", String(Math.round(center.x * 1000) / 1000), "20", String(Math.round(center.y * 1000) / 1000), "30", "0", "40", String(Math.round(circle.r * 1000) / 1000));
+        }
+        for (const arc of part.previewGeometry.arcs) {
+          const center = transformedCenter({ x: arc.cx, y: arc.cy }, placement, sourcePoints);
+          lines.push(
+            "0",
+            "ARC",
+            ...layer(layerName),
+            "10",
+            String(Math.round(center.x * 1000) / 1000),
+            "20",
+            String(Math.round(center.y * 1000) / 1000),
+            "30",
+            "0",
+            "40",
+            String(Math.round(arc.r * 1000) / 1000),
+            "50",
+            String((arc.startAngle + placement.rotation) % 360),
+            "51",
+            String((arc.endAngle + placement.rotation) % 360)
+          );
+        }
       }
       line(placement.x, placement.y + Math.min(10, size.height / 2), placement.x + Math.min(workspace.leadInLength, size.width / 2), placement.y + Math.min(10, size.height / 2), "LEAD_IN");
       if (workspace.enableMicroJoins && Math.max(size.width, size.height) / Math.max(1, Math.min(size.width, size.height)) >= 5) {

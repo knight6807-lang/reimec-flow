@@ -1138,41 +1138,60 @@ export class SheetPackingService {
 
   private packOrder(parts: ExpandedPart[], rotations: number[], usableWidth: number, usableHeight: number, input: NestingEngineInput) {
     const placements: PartPlacement[] = [];
-    const plateModel = new RecoveredBasePlateModel(input.sheetWidth, input.sheetHeight, input.border);
+    const plateModels = new Map<number, RecoveredBasePlateModel>();
+    const plateModelFor = (sheetIndex: number) => {
+      let model = plateModels.get(sheetIndex);
+      if (!model) {
+        model = new RecoveredBasePlateModel(input.sheetWidth, input.sheetHeight, input.border);
+        plateModels.set(sheetIndex, model);
+      }
+      return model;
+    };
     const spacing = Math.max(0, input.spacing + input.kerf);
     const started = Date.now();
     const maxMs = clamp(Number(input.maxOptimizationMs) || 1500, 50, 10_000);
     for (const part of parts) {
       if (Date.now() - started > maxMs) break;
-      let best: { x: number; y: number; width: number; height: number; rotation: number; polygon: Polygon; score: number } | null = null;
-      for (const rotation of rotations) {
-        const localPolygon = normalizePolygon(rotatePolygon(part.part.outerContour, rotation));
-        for (const point of this.candidatePoints(placements, input, localPolygon)) {
-          const x = round(point.x, 0.1);
-          const y = round(point.y, 0.1);
-          const geometry = transformPartGeometry(part.part, x, y, rotation);
-          if (!this.insideUsableSheet(geometry.outer, input)) continue;
-          const surrounding = plateModel.getSurroundingPlacements(geometry.outer, spacing);
-          if (surrounding.some((placement) => partGeometriesCollideOrTooClose(geometry, transformPartGeometry(placement.part, placement.offset.x, placement.offset.y, placement.angle), spacing))) continue;
-          const box = polygonBoundsSize(geometry.outer);
-          const boundingWaste = Math.max(0, box.width * box.height - part.part.area);
-          const travel = placements.length ? Math.min(...placements.map((placement) => distance({ x, y }, { x: placement.x, y: placement.y }))) : 0;
-          const envelope = placements.length > 20 ? box : this.layoutEnvelope([...placements.map((placement) => this.placementPolygon(placement)), geometry.outer]);
-          const envelopeWaste = placements.length > 20 ? 0 : Math.max(0, envelope.width * envelope.height - placements.reduce((sum, placement) => sum + placement.part.area, 0) - part.part.area);
-          const contactScore = placements.reduce((sum, placement) => {
-            const clearance = polygonDistance(geometry.outer, this.placementPolygon(placement));
-            return sum + (clearance <= Math.max(0.01, spacing + 0.05) ? 1 : 0);
-          }, 0);
-          const score = envelopeWaste * 2 + envelope.height * 100 + envelope.width * 20 + box.minY * 10 + box.minX + boundingWaste * 0.2 + travel * 0.05 - contactScore * 25;
-          if (!best || score < best.score) best = { x, y, width: box.width, height: box.height, rotation, polygon: geometry.outer, score };
+      const canEverFit = rotations.some((rotation) => {
+        const box = polygonBoundsSize(normalizePolygon(rotatePolygon(part.part.outerContour, rotation)));
+        return box.width <= usableWidth + 0.001 && box.height <= usableHeight + 0.001;
+      });
+      if (!canEverFit) continue;
+      let best: { sheetIndex: number; x: number; y: number; width: number; height: number; rotation: number; polygon: Polygon; score: number } | null = null;
+      const maxSheet = Math.max(0, ...placements.map((placement) => placement.sheetIndex), -1);
+      for (let sheetIndex = 0; sheetIndex <= maxSheet + 1; sheetIndex += 1) {
+        const sheetPlacements = placements.filter((placement) => placement.sheetIndex === sheetIndex);
+        const plateModel = plateModelFor(sheetIndex);
+        for (const rotation of rotations) {
+          const localPolygon = normalizePolygon(rotatePolygon(part.part.outerContour, rotation));
+          for (const point of this.candidatePoints(sheetPlacements, input, localPolygon)) {
+            const x = round(point.x, 0.1);
+            const y = round(point.y, 0.1);
+            const geometry = transformPartGeometry(part.part, x, y, rotation);
+            if (!this.insideUsableSheet(geometry.outer, input)) continue;
+            const surrounding = plateModel.getSurroundingPlacements(geometry.outer, spacing);
+            if (surrounding.some((placement) => partGeometriesCollideOrTooClose(geometry, transformPartGeometry(placement.part, placement.offset.x, placement.offset.y, placement.angle), spacing))) continue;
+            const box = polygonBoundsSize(geometry.outer);
+            const boundingWaste = Math.max(0, box.width * box.height - part.part.area);
+            const travel = sheetPlacements.length ? Math.min(...sheetPlacements.map((placement) => distance({ x, y }, { x: placement.x, y: placement.y }))) : 0;
+            const envelope = sheetPlacements.length > 20 ? box : this.layoutEnvelope([...sheetPlacements.map((placement) => this.placementPolygon(placement)), geometry.outer]);
+            const envelopeWaste = sheetPlacements.length > 20 ? 0 : Math.max(0, envelope.width * envelope.height - sheetPlacements.reduce((sum, placement) => sum + placement.part.area, 0) - part.part.area);
+            const contactScore = sheetPlacements.reduce((sum, placement) => {
+              const clearance = polygonDistance(geometry.outer, this.placementPolygon(placement));
+              return sum + (clearance <= Math.max(0.01, spacing + 0.05) ? 1 : 0);
+            }, 0);
+            const score = sheetIndex * 1_000_000_000 + envelopeWaste * 2 + envelope.height * 100 + envelope.width * 20 + box.minY * 10 + box.minX + boundingWaste * 0.2 + travel * 0.05 - contactScore * 25;
+            if (!best || score < best.score) best = { sheetIndex, x, y, width: box.width, height: box.height, rotation, polygon: geometry.outer, score };
+          }
         }
+        if (best?.sheetIndex === sheetIndex) break;
       }
       if (!best) continue;
       const box = polygonBoundsSize(best.polygon);
       const placement = {
         id: part.id,
         nestingItemId: part.part.itemId,
-        sheetIndex: 0,
+        sheetIndex: best.sheetIndex,
         x: round(box.minX, 0.1),
         y: round(box.minY, 0.1),
         width: round(box.width, 0.1),
@@ -1183,7 +1202,7 @@ export class SheetPackingService {
         part: part.part
       };
       placements.push(placement);
-      plateModel.addPlacement(placement);
+      plateModelFor(best.sheetIndex).addPlacement(placement);
     }
     return placements;
   }

@@ -4887,6 +4887,7 @@ function App() {
   const [nestingWorkspaceRecommendation, setNestingWorkspaceRecommendation] = useState<NestingOffcutRecommendation | null>(null);
   const [nestingWorkspaceLoading, setNestingWorkspaceLoading] = useState(false);
   const [nestingWorkspaceError, setNestingWorkspaceError] = useState<string | null>(null);
+  const [nestingWorkspaceStatus, setNestingWorkspaceStatus] = useState<string | null>(null);
   const [nestingWorkspaceCustomerId, setNestingWorkspaceCustomerId] = useState("");
   const [nestingWorkspaceCustomerName, setNestingWorkspaceCustomerName] = useState("Walk-in");
   const [nestingWorkspaceNestName, setNestingWorkspaceNestName] = useState("New Nest");
@@ -6370,12 +6371,6 @@ function App() {
     if (canOpenViewMode(viewMode)) return;
     setViewMode(workspaceLocked ? "billing" : "settings");
   }, [viewMode, deviceAllowedFeatures, workspaceLocked, canManageAccounts]);
-
-  useEffect(() => {
-    if (viewMode === "nesting_intelligence" || viewMode === "nesting_studio") {
-      setViewMode("nesting_workspace");
-    }
-  }, [viewMode]);
 
   useEffect(() => {
     if (viewMode !== "nesting_studio" && viewMode !== "nesting_workspace") return;
@@ -8862,25 +8857,41 @@ function App() {
     if (!nestingWorkspaceActive) return;
     if (!(nestingWorkspaceActive.parts ?? []).length) {
       setNestingWorkspaceError("Add at least one part before running the nest program.");
+      setNestingWorkspaceStatus(null);
       return;
     }
     setNestingWorkspaceLoading(true);
     setNestingWorkspaceError(null);
+    setNestingWorkspaceStatus("Running nest program…");
     try {
       const res = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}/auto-nest`, { method: "POST" });
       const data = (await res.json().catch(() => null)) as { error?: string; workspace?: NestingWorkspaceRecord; warnings?: NestingWorkspaceRecord["warnings"] } | null;
       if (!res.ok) {
         setNestingWorkspaceError(data?.error ?? "Failed to auto nest.");
+        setNestingWorkspaceStatus(null);
         return;
       }
       await refreshNestingWorkspaceData(nestingWorkspaceActive.id);
       await refreshBrainCenter();
-      const critical = (data?.workspace?.warnings ?? data?.warnings ?? []).filter((warning) => warning.severity === "critical");
-      if (critical.length) {
-        setNestingWorkspaceError(critical.map((warning) => warning.message).join(" · "));
+      const refreshed = await (async () => {
+        const latest = await apiFetch(`/api/nesting/workspaces/${nestingWorkspaceActive.id}`);
+        return (await latest.json().catch(() => null)) as { workspace?: NestingWorkspaceRecord } | null;
+      })();
+      const workspace = refreshed?.workspace ?? data?.workspace ?? null;
+      const warnings = workspace?.warnings ?? data?.warnings ?? [];
+      const critical = warnings.filter((warning) => warning.severity === "critical");
+      const placed = workspace?.placements?.length ?? 0;
+      const requested = (workspace?.parts ?? []).reduce((sum, part) => sum + Math.max(1, Math.round(part.quantity || 1)), 0);
+      if (critical.length || placed < requested) {
+        setNestingWorkspaceError(critical.map((warning) => warning.message).join(" · ") || `Nest incomplete: placed ${placed} of ${requested} parts.`);
+        setNestingWorkspaceStatus(`Incomplete nest · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}% · waste ${(workspace?.wastePercent ?? 0).toFixed(1)}%`);
+      } else {
+        setNestingWorkspaceError(null);
+        setNestingWorkspaceStatus(`Nest complete · ${placed} parts · usage ${(workspace?.usagePercent ?? 0).toFixed(1)}% · waste ${(workspace?.wastePercent ?? 0).toFixed(1)}%`);
       }
     } catch (error) {
       setNestingWorkspaceError(error instanceof Error ? error.message : "Failed to auto nest.");
+      setNestingWorkspaceStatus(null);
     } finally {
       setNestingWorkspaceLoading(false);
     }
@@ -18492,6 +18503,7 @@ function App() {
                   </div>
                 </div>
                 {nestingWorkspaceError ? <div style={{ fontSize: 12, color: "#fca5a5", marginTop: 10 }}>{nestingWorkspaceError}</div> : null}
+                {nestingWorkspaceStatus ? <div style={{ fontSize: 12, color: "#86efac", marginTop: 10 }}>{nestingWorkspaceStatus}</div> : null}
                 {nestingWorkspaceRecommendation ? (
                   <div style={{ marginTop: 12, padding: 12, borderRadius: 8, border: "1px solid rgba(110,231,183,0.32)", background: "rgba(20,83,45,0.18)", fontSize: 13 }}>
                     {nestingWorkspaceRecommendation.message}
